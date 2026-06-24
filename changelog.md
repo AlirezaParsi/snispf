@@ -4,6 +4,11 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.6
+### wrong_seq stays strict + re-injects the fake
+- **The fake ClientHello is now re-injected** (up to 4×, 250 ms apart) until the server's dup-ack confirms it landed. A single fake can be lost to strict conntrack or transient drops; without the dup-ack the flow timed out and the connection was dropped ("ping but no real-delay"). The happy path is unchanged — if the first inject confirms, nothing extra is sent.
+- **Reverted v0.1.5's fallback-on-failure.** wrong_seq no longer falls back to sending the ClientHello another way: the real SNI must never go out unspoofed (it would expose a DPI-blocked SNI and could flag the server). If confirmation genuinely fails, the connection is dropped, as before. The conntrack relaxation from v0.1.5 stays.
+
 ## v0.1.5
 ### wrong_seq reliability — "ping but no real-delay" fixed
 - **Auto-relaxes conntrack at boot** (`net.netfilter.nf_conntrack_tcp_be_liberal=1`). `wrong_seq` injects a fake ClientHello with an invalid TCP sequence; strict conntrack flagged it INVALID and dropped it, so the bypass confirmation timed out and the connection was dropped — the client (v2rayNG) got a ping but no real-delay. The module now sets this knob itself (best-effort).

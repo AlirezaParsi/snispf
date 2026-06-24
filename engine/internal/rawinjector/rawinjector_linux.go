@@ -728,7 +728,6 @@ func (i *injector) handlePacket(pkt []byte) {
 
 			tpl := append([]byte(nil), ip...)
 			go func() {
-				time.Sleep(1 * time.Millisecond)
 				frame, err := buildFakeFrame(tpl, isn, fake)
 				if err != nil {
 					ps.mu.Lock()
@@ -737,21 +736,44 @@ func (i *injector) handlePacket(pkt []byte) {
 					i.markFailed(ps)
 					return
 				}
-				if err := i.injectFrame(frame); err != nil {
-					// Retry once with a refreshed ifindex — transient EAGAIN
-					// or a stale route resolution shouldn't kill the flow.
-					time.Sleep(2 * time.Millisecond)
-					if err2 := i.injectFrame(frame); err2 != nil {
-						ps.mu.Lock()
-						ps.lastEvent = "fake_inject_failed"
-						ps.mu.Unlock()
-						i.markFailed(ps)
+				// Inject the fake, then RE-inject if the server's dup-ack (our
+				// confirmation signal) hasn't arrived yet. A single fake can be
+				// dropped (strict conntrack, transient loss); without the dup-ack
+				// the flow times out and the connection is dropped — the "ping but
+				// no real-delay" failure. Re-injecting the same wrong-seq packet is
+				// safe: the server just dup-acks the already-acked SYN again, and
+				// the DPI re-reads the decoy SNI. The happy path is unchanged — if
+				// confirmation lands after the first inject, the select returns
+				// immediately and no extra packets are sent.
+				const maxInjects = 4
+				for attempt := 0; attempt < maxInjects; attempt++ {
+					if attempt == 0 {
+						// Let the real outbound ACK leave first.
+						time.Sleep(1 * time.Millisecond)
+					}
+					if err := i.injectFrame(frame); err != nil {
+						// Transient EAGAIN / stale route — one quick retry.
+						time.Sleep(2 * time.Millisecond)
+						if err2 := i.injectFrame(frame); err2 != nil {
+							ps.mu.Lock()
+							ps.lastEvent = "fake_inject_failed"
+							ps.mu.Unlock()
+							i.markFailed(ps)
+							return
+						}
+					}
+					ps.mu.Lock()
+					ps.lastEvent = "fake_injected"
+					ps.mu.Unlock()
+					select {
+					case <-ps.confirmedC:
 						return
+					case <-ps.failedC:
+						return
+					case <-time.After(250 * time.Millisecond):
+						// No dup-ack yet — loop and re-inject.
 					}
 				}
-				ps.mu.Lock()
-				ps.lastEvent = "fake_injected"
-				ps.mu.Unlock()
 			}()
 			return
 		}
