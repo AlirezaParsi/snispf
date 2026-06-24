@@ -1,0 +1,24 @@
+# Example IP list for the SNISPF scanner (Scan tab → Custom IPs / domains).
+# One IPv4 per line. Each is probed directly (no DNS) with the default probe SNI;
+# a "clean" result is a reachable Cloudflare edge you can use as the upstream.
+#
+# These are sample IPs from Cloudflare's announced ranges. Reachability is
+# per-IP and per-network (especially during a shutdown / whitelist) — the
+# scanner finds which of these actually work for you. The built-in scan already
+# samples the full ranges; use this list to force-test specific IPs you trust.
+
+104.16.132.229
+104.17.52.241
+104.18.41.132
+104.19.229.21
+104.21.53.30
+104.24.219.218
+104.25.9.181
+104.26.7.158
+104.27.40.21
+172.64.148.90
+172.67.120.28
+162.159.33.132
+188.114.96.1
+190.93.245.36
+197.234.240.51

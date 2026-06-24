@@ -35,6 +35,22 @@ Config lives at `/data/adb/snispf/config.json` (survives module updates). Run `s
 
 ---
 
+## Custom scan lists
+
+Besides the built-in Cloudflare range scan, the **Scan** tab has a *Custom IPs / domains* box — paste your own, one per line:
+
+- **IPs** are probed directly (no DNS) — a clean result is a reachable edge to use as the upstream.
+- **Domains** are DNS-resolved and probed using the domain as the SNI — a clean result means that domain passes your DPI, so it's a good **fake-SNI (decoy)** candidate. Tapping **Use** on a domain result sets it as `FAKE_SNI` and its IP as `CONNECT_IP`.
+
+Starter lists are in [`examples/`](examples/):
+
+- [`examples/ips.txt`](examples/ips.txt) — sample Cloudflare edge IPs
+- [`examples/domains.txt`](examples/domains.txt) — commonly Cloudflare-fronted domains (fake-SNI candidates)
+
+> Domain scanning needs DNS, so it's mainly a normal-times discovery tool — during a DNS-hijacking shutdown, domains resolve to sinkholes and are filtered out; use the direct IP-range scan (the default) then.
+
+---
+
 ## Build
 
 Pure Go, `CGO_ENABLED=0` everywhere (static binaries run on Android). Needs Go 1.22+ and `zip`.

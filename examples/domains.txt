@@ -1,0 +1,39 @@
+# Example domain list for the SNISPF scanner (Scan tab → Custom IPs / domains).
+# One domain per line. Each is DNS-resolved and probed with the domain itself as
+# the SNI, so a "clean" result means that domain passes your DPI and is a good
+# fake-SNI (decoy) candidate. Lines starting with # are ignored if you keep them;
+# the WebUI textarea ignores blanks — paste only the names you want.
+#
+# These are commonly Cloudflare-fronted hosts. Whether one works as a decoy
+# depends on your network/DPI — the scanner tells you which are clean.
+
+www.cloudflare.com
+hcaptcha.com
+www.hcaptcha.com
+assets.hcaptcha.com
+cdnjs.cloudflare.com
+cdn.jsdelivr.net
+discord.com
+cdn.discordapp.com
+media.discordapp.net
+fast.com
+zoom.us
+shopify.com
+cdn.shopify.com
+stripe.com
+js.stripe.com
+api.stripe.com
+medium.com
+notion.so
+canva.com
+figma.com
+trustpilot.com
+mailchimp.com
+sendgrid.com
+intercom.io
+zendesk.com
+auth0.com
+okta.com
+digitalocean.com
+upstash.com
+supabase.com
