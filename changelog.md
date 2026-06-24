@@ -4,6 +4,12 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.5
+### wrong_seq reliability — "ping but no real-delay" fixed
+- **Auto-relaxes conntrack at boot** (`net.netfilter.nf_conntrack_tcp_be_liberal=1`). `wrong_seq` injects a fake ClientHello with an invalid TCP sequence; strict conntrack flagged it INVALID and dropped it, so the bypass confirmation timed out and the connection was dropped — the client (v2rayNG) got a ping but no real-delay. The module now sets this knob itself (best-effort).
+- **Graceful fallback instead of dropping** — if `wrong_seq` confirmation still fails, the real ClientHello is now written to the live upstream connection instead of dropping it. The fake packet was already injected (so the DPI may still have seen the decoy), and many CDN-fronted configs don't need the bypass at all — so traffic flows instead of failing outright.
+- Installer message cleaned up (no stale reboot instruction).
+
 ## v0.1.4
 ### Magisk fix #2 — read-only log path
 - **Fixes the daemon crashing at startup on Magisk** with `mkdir snispf: read-only file system`. The API log directory was derived from `os.UserConfigDir()`, which for a root daemon (HOME unset, cwd `/`) resolved to a relative path on the read-only rootfs. It's now placed next to the config (`/data/adb/snispf/logs`, always writable), with fallbacks, and a log-file failure no longer kills the daemon — it degrades to stdout (still captured in `service.log`).

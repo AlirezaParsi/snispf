@@ -15,6 +15,19 @@ mkdir -p "$RT"
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 sleep 5
 
+# wrong_seq injects a fake ClientHello with a deliberately INVALID TCP sequence
+# number. Strict conntrack flags it as out-of-window/INVALID and drops it before
+# it leaves the device, so the bypass confirmation never sees it and times out
+# ("wrong_seq: confirmation failed status=timeout"). Relaxing conntrack lets the
+# fake packet through. Best-effort: not all kernels expose the knob.
+if sysctl -w net.netfilter.nf_conntrack_tcp_be_liberal=1 >/dev/null 2>&1; then
+  echo "[service] conntrack tcp_be_liberal=1 (sysctl)" >> "$LOG"
+elif echo 1 > /proc/sys/net/netfilter/nf_conntrack_tcp_be_liberal 2>/dev/null; then
+  echo "[service] conntrack tcp_be_liberal=1 (procfs)" >> "$LOG"
+else
+  echo "[service] WARN: could not relax conntrack (nf_conntrack_tcp_be_liberal); wrong_seq may time out" >> "$LOG"
+fi
+
 echo "[service] starting control daemon on $ADDR" >> "$LOG"
 # Control service supervises the proxy core child; start/stop via /v1/*.
 # Detach into its OWN session (setsid) and ignore SIGHUP (nohup): when this

@@ -30,6 +30,4 @@ fi
 set_perm "$RT" 0 0 0700
 set_perm "$RT/config.json" 0 0 0600
 
-ui_print "- control API will listen on 127.0.0.1:8797 after boot"
-ui_print "- edit $RT/config.json (set CONNECT_IP / FAKE_SNI), then reboot"
-ui_print "- runs as root: wrong_seq raw injection available"
+ui_print "- SNISPF installed — open the WebUI to configure and start"

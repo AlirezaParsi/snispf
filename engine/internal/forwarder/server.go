@@ -235,13 +235,20 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 				registeredPort = 0
 			}
 
+			// Last attempt failed. Don't drop the connection — that guarantees
+			// failure for the user (ping works, but no real data; the symptom
+			// reporters see in v2rayNG as "no real-delay"). Instead write the real
+			// ClientHello on the live upstream connection and proceed. For wrong_seq
+			// this is safe: the fake bad-seq packet was already injected and is
+			// discarded by the server, so if it left the device the DPI has seen the
+			// decoy SNI and the bypass may still hold; worst case the real SNI is
+			// exposed — no worse than dropping. Apply() only writes firstData on
+			// success, so there's no double-write here.
 			if s.Strategy.Name() == "wrong_seq" {
-				logx.Warnf("connection dropped before upstream first-write: strategy=wrong_seq request_sni=%q endpoint=%s:%d reason=strategy_apply_failed err=%v", requestSNI, selected.IP, selected.Port, lastStrategyErr)
-				_ = outgoing.Close()
-				return
+				logx.Warnf("wrong_seq confirmation failed; falling back to direct first-write request_sni=%q endpoint=%s:%d err=%v", requestSNI, selected.IP, selected.Port, lastStrategyErr)
+			} else {
+				logx.Warnf("strategy apply returned false: strategy=%s request_sni=%q endpoint=%s:%d; falling back to direct first-write", s.Strategy.Name(), requestSNI, selected.IP, selected.Port)
 			}
-
-			logx.Warnf("strategy apply returned false: strategy=%s request_sni=%q endpoint=%s:%d; falling back to direct first-write", s.Strategy.Name(), requestSNI, selected.IP, selected.Port)
 			_, _ = outgoing.Write(first)
 			break
 		}
