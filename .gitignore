@@ -11,3 +11,4 @@ engine/release/
 
 # os
 .DS_Store
+/bin/
