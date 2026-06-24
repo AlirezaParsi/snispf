@@ -1,0 +1,13 @@
+# build artifacts
+/bin/
+*.zip
+engine/dist/
+engine/release/
+
+# logs / scratch
+*.log
+.nc.err
+.uitest.js
+
+# os
+.DS_Store

@@ -1,0 +1,6 @@
+id=snispf
+name=SNISPF DPI Bypass
+version=v0.1.0
+versionCode=1
+author=Alireza
+description=SNI-spoofing DPI bypass daemon (wrong_seq/fragment/fake_sni) with a localhost control API on 127.0.0.1:8797. Runs as a root boot service. WebUI + integrated scanner in progress.
