@@ -100,12 +100,16 @@ func Run(cfgPath, addr, token string, parentPID int, parentStartUnixMS int64, ap
 		return err
 	}
 
-	logPath, err := serviceLogPath()
+	// A missing API log file must never take the daemon down — the boot
+	// service already redirects our stdout/stderr to /data/adb/snispf/service.log,
+	// so we degrade to stdout-only instead of dying.
+	logPath, err := serviceLogPath(cfgPath)
 	if err != nil {
-		return err
-	}
-	if err := ensureLogSink(logPath); err != nil {
-		return err
+		log.Printf("service log file unavailable, logging to stdout only: %v", err)
+		logPath = ""
+	} else if err := ensureLogSink(logPath); err != nil {
+		log.Printf("could not open service log %s, logging to stdout only: %v", logPath, err)
+		logPath = ""
 	}
 	defer log.SetOutput(os.Stderr)
 
@@ -184,16 +188,37 @@ func Run(cfgPath, addr, token string, parentPID int, parentStartUnixMS int64, ap
 	return nil
 }
 
-func serviceLogPath() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		base = "."
+// serviceLogPath picks a writable directory for the API log, most-reliable
+// first. The config directory is the safest bet on Android: the installer
+// seeded config.json there (/data/adb/snispf) so it's guaranteed writable.
+// os.UserConfigDir() is unreliable for a root daemon — Magisk launches it with
+// HOME unset and cwd "/", so it falls back to a relative "snispf" under the
+// read-only rootfs ("mkdir snispf: read-only file system") and the daemon dies.
+func serviceLogPath(cfgPath string) (string, error) {
+	var bases []string
+	if cfgPath != "" {
+		if d := filepath.Dir(cfgPath); d != "" && d != "." {
+			bases = append(bases, d)
+		}
 	}
-	dir := filepath.Join(base, "snispf", "logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+	if b, err := os.UserConfigDir(); err == nil {
+		bases = append(bases, filepath.Join(b, "snispf"))
 	}
-	return filepath.Join(dir, "service.log"), nil
+	bases = append(bases, os.TempDir())
+
+	var lastErr error
+	for _, base := range bases {
+		dir := filepath.Join(base, "logs")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			lastErr = err
+			continue
+		}
+		return filepath.Join(dir, "service.log"), nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate log directory")
+	}
+	return "", lastErr
 }
 
 func ensureLogSink(path string) error {

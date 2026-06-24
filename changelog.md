@@ -4,6 +4,10 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.4
+### Magisk fix #2 — read-only log path
+- **Fixes the daemon crashing at startup on Magisk** with `mkdir snispf: read-only file system`. The API log directory was derived from `os.UserConfigDir()`, which for a root daemon (HOME unset, cwd `/`) resolved to a relative path on the read-only rootfs. It's now placed next to the config (`/data/adb/snispf/logs`, always writable), with fallbacks, and a log-file failure no longer kills the daemon — it degrades to stdout (still captured in `service.log`).
+
 ## v0.1.3
 ### Magisk fix — daemon stays up
 - **Fixes the daemon dying on Magisk** (control API "connection refused" / WebUI stuck OFFLINE). The boot service now detaches the daemon into its own session (`setsid`) and the daemon ignores `SIGHUP`, so Magisk tearing down the boot-service process group no longer kills it. KernelSU / APatch were unaffected.
