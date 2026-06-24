@@ -162,6 +162,7 @@ func edgeProbe(ip, sni, dev string, timeout time.Duration) (status string, rttMS
 type Result struct {
 	IP     string  `json:"ip"`
 	SNI    string  `json:"sni"`
+	Host   string  `json:"host,omitempty"` // source domain, if this came from a domain
 	RTTMS  float64 `json:"rtt_ms"`
 	Status string  `json:"status"`
 	Known  bool    `json:"known"`
@@ -191,6 +192,11 @@ type Options struct {
 	Save     bool
 	// Interface pins probe dials to a WAN device (already resolved, not "auto").
 	Interface string
+	// ExtraIPs are user-supplied IPs to probe (default SNI). Domains are resolved
+	// (DNS) and probed using the domain itself as the SNI — handy for finding
+	// working fake-SNI / edge candidates beyond the bundled Cloudflare ranges.
+	ExtraIPs []string
+	Domains  []string
 }
 
 func (o *Options) applyDefaults() {
@@ -211,24 +217,80 @@ func (o *Options) applyDefaults() {
 	}
 }
 
+type probeTarget struct {
+	ip, sni, host string
+	known         bool
+}
+
+// resolveDomainIPs resolves a domain to up to two non-bogus IPv4 addresses.
+// (During a DNS hijack these come back as sinkholes and get filtered, so domain
+// scanning is mainly a normal-times discovery tool.)
+func resolveDomainIPs(domain string) []string {
+	if domain == "" {
+		return nil
+	}
+	addrs, err := net.LookupHost(domain)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil && !isBogus(a) {
+			out = append(out, a)
+			if len(out) >= 2 {
+				break
+			}
+		}
+	}
+	return out
+}
+
 // Run probes Cloudflare IPs (hit-list survivors first, then sampled unless
-// HitsOnly), classifies them, updates the hit-list, and returns ranked results.
+// HitsOnly), plus any custom IPs/domains, classifies them, updates the hit-list,
+// and returns ranked results.
 func Run(ctx context.Context, opts Options) (Report, error) {
 	opts.applyDefaults()
 
 	hits := loadHits(opts.HitsPath)
 	survivors := hits.survivors()
 
-	var ips []string
-	if opts.HitsOnly {
-		ips = survivors
-	} else {
-		ips = append(ips, survivors...)
-		ips = dedupAppend(ips, sampleCFIPs(opts.PerRange, opts.Seed))
-	}
 	known := map[string]bool{}
 	for _, ip := range survivors {
 		known[ip] = true
+	}
+
+	// Build the probe list. Each target carries its own SNI + source host so
+	// custom IPs and domains are tested correctly alongside the CF ranges.
+	var targets []probeTarget
+	seen := map[string]bool{}
+	add := func(ip, sni, host string, k bool) {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			return
+		}
+		key := ip + "|" + sni
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		targets = append(targets, probeTarget{ip: ip, sni: sni, host: host, known: k || known[ip]})
+	}
+	for _, ip := range survivors {
+		add(ip, opts.SNI, "", true)
+	}
+	if !opts.HitsOnly {
+		for _, ip := range sampleCFIPs(opts.PerRange, opts.Seed) {
+			add(ip, opts.SNI, "", false)
+		}
+	}
+	for _, ip := range opts.ExtraIPs {
+		add(ip, opts.SNI, "", false)
+	}
+	for _, d := range opts.Domains {
+		d = strings.TrimSpace(d)
+		for _, ip := range resolveDomainIPs(d) {
+			add(ip, d, d, false) // probe with the domain itself as SNI
+		}
 	}
 
 	var (
@@ -240,34 +302,34 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	)
 	sem := make(chan struct{}, opts.Threads)
 
-	for _, ip := range ips {
+	for _, tg := range targets {
 		if ctx.Err() != nil {
 			break
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(ip string) {
+		go func(tg probeTarget) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			status, rtt := edgeProbe(ip, opts.SNI, opts.Interface, opts.Timeout)
+			status, rtt := edgeProbe(tg.ip, tg.sni, opts.Interface, opts.Timeout)
 			mu.Lock()
 			defer mu.Unlock()
-			rec := hits.update(ip, status, rtt)
+			rec := hits.update(tg.ip, status, rtt)
 			switch status {
 			case statusOK, statusAlert:
 				if rtt == 0 {
 					rtt = 9999
 				}
 				rows = append(rows, Result{
-					IP: ip, SNI: opts.SNI, RTTMS: round1(rtt), Status: status,
-					Known: known[ip], Clean: rec.Clean, Seen: rec.Seen,
+					IP: tg.ip, SNI: tg.sni, Host: tg.host, RTTMS: round1(rtt), Status: status,
+					Known: tg.known, Clean: rec.Clean, Seen: rec.Seen,
 				})
 			case statusDPI:
 				dpi++
 			default:
 				blocked++
 			}
-		}(ip)
+		}(tg)
 	}
 	wg.Wait()
 
@@ -280,7 +342,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 
 	rep := Report{
 		Results: rows, Clean: len(rows), DPIBlocked: dpi, TCPBlocked: blocked,
-		Probed: len(ips),
+		Probed: len(targets),
 	}
 	if len(rows) > 0 {
 		best := rows[0]

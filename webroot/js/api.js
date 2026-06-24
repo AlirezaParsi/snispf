@@ -85,7 +85,7 @@
     stop:     function () { return request("POST", "/v1/stop"); },
     logs:     function (limit) { return request("GET", "/v1/logs?limit=" + (limit || 300)); },
     scan:      function (q) { return request("GET", "/v1/scan" + (q || ""), null, 150); },
-    scanStart: function (q) { return request("POST", "/v1/scan/start" + (q || ""), null, 20); },
+    scanStart: function (q, body) { return request("POST", "/v1/scan/start" + (q || ""), body || null, 20); },
     scanStatus:function () { return request("GET", "/v1/scan/status", null, 15); },
     apply:    function (ip, sni, port) {
       return request("GET", "/v1/apply?ip=" + encodeURIComponent(ip) +

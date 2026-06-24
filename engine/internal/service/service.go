@@ -508,6 +508,17 @@ func (s *controlService) handleScanStart(w http.ResponseWriter, r *http.Request)
 	config.Normalize(&cfg)
 	opts.Interface = netutil.ResolveWAN(cfg.Interface, cfg.ConnectIP)
 
+	// optional POST body: custom IP / domain lists to also probe
+	var body struct {
+		IPs     []string `json:"ips"`
+		Domains []string `json:"domains"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
+	}
+	opts.ExtraIPs = body.IPs
+	opts.Domains = body.Domains
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Second)
 		defer cancel()

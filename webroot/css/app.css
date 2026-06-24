@@ -242,6 +242,12 @@ input, select {
 }
 input:focus, select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
 .field-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+textarea.custom {
+  width: 100%; min-height: 60px; resize: vertical; padding: 10px 12px;
+  border-radius: var(--r-sm); border: 1px solid var(--line-2); background: var(--bg-2);
+  color: var(--text); font-family: var(--mono); font-size: 13px; line-height: 1.5;
+}
+textarea.custom:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
 
 /* picker trigger (looks like a field, opens a bottom sheet) */
 .picker {

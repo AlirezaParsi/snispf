@@ -24,11 +24,16 @@
       function sync() { segAll.setAttribute("aria-pressed", self.hitsOnly ? "false" : "true"); segHits.setAttribute("aria-pressed", self.hitsOnly ? "true" : "false"); }
       var seg = el("div.seg", null, [segAll, segHits]);
 
-      var scanBtn = el("button.btn.btn--primary.btn--full", { onclick: this.runScan.bind(this) }, [ui.icon("radar", "ico--sm"), t(this.scanRunning ? "scan_scanning" : "scan_find")]);
+      var ta = el("textarea.custom", { placeholder: t("scan_custom_ph"), rows: "2" });
+      ta.value = this.customText || "";
+      ta.addEventListener("input", function (e) { self.customText = e.target.value; });
+      var customField = el("label.field", { style: "margin:10px 0 0" }, [el("span", null, [t("scan_custom")]), ta]);
+
+      var scanBtn = el("button.btn.btn--primary.btn--full", { style: "margin-top:10px", onclick: this.runScan.bind(this) }, [ui.icon("radar", "ico--sm"), t(this.scanRunning ? "scan_scanning" : "scan_find")]);
       if (this.scanRunning) scanBtn.disabled = true;
       var tuneBtn = el("button.btn.btn--full", { style: "margin-top:8px", onclick: this.runTune.bind(this) }, [ui.icon("zap", "ico--sm"), t(this.tuneRunning ? "tune_tuning" : "tune_btn")]);
       if (this.tuneRunning) tuneBtn.disabled = true;
-      v.appendChild(ui.card(t("scan_finder"), t("scan_dnsfree"), [seg, el("div", { style: "height:10px" }), scanBtn, tuneBtn], "radar"));
+      v.appendChild(ui.card(t("scan_finder"), t("scan_dnsfree"), [seg, customField, scanBtn, tuneBtn], "radar"));
 
       this.scanOut = el("div");
       this.tuneOut = el("div");
@@ -40,6 +45,20 @@
     },
 
     maybeRender: function () { if (this.view && App.activeId === "scan") this.render(); },
+
+    // split the custom textarea into {ips, domains}
+    parseCustom: function () {
+      var txt = (this.customText || "").trim();
+      if (!txt) return null;
+      var ips = [], domains = [];
+      txt.split(/[\s,;]+/).forEach(function (tok) {
+        tok = tok.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        if (!tok) return;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(tok)) ips.push(tok);
+        else if (tok.indexOf(".") > 0) domains.push(tok);
+      });
+      return (ips.length || domains.length) ? { ips: ips, domains: domains } : null;
+    },
 
     // ---- scan ----
     paintScan: function () {
@@ -56,7 +75,7 @@
       App.set({ busy: true });
       this.render();
       var self = this, q = "?per_range=6" + (this.hitsOnly ? "&hits_only=1" : "");
-      App.api.scanStart(q).then(function () { self.pollScan(); }).catch(function (err) {
+      App.api.scanStart(q, this.parseCustom()).then(function () { self.pollScan(); }).catch(function (err) {
         self.scanRunning = false; self.scanError = err.message; App.set({ busy: false }); self.maybeRender();
       });
     },
@@ -84,14 +103,14 @@
         var use = el("button.btn.btn--ghost", { style: "padding:6px 12px;font-size:12px", onclick: function () { self.use(row); } }, [t("scan_use")]);
         out.appendChild(el("div.result" + (i === 0 ? ".is-best" : ""), null, [
           el("span.result__rank.mono", null, [i === 0 ? "★" : String(i + 1)]),
-          el("div", null, [el("div.result__ip.mono", null, [row.ip]), el("div.result__meta", null, [meta])]),
+          el("div", null, [el("div.result__ip.mono", null, [row.host || row.ip]), el("div.result__meta", null, [meta + (row.host ? " · " + row.ip : "")])]),
           el("div.result__sig", null, [ui.bars(row.rtt_ms), el("span.result__ms.mono", null, [ms])]),
           use
         ]));
       });
     },
     use: function (row) {
-      var sni = (App.state.config && App.state.config.FAKE_SNI) || row.sni;
+      var sni = row.host || (App.state.config && App.state.config.FAKE_SNI) || row.sni;
       ui.toast(t("t_applying") + row.ip + "…");
       App.api.apply(row.ip, sni, 443).then(function () {
         ui.toast(t("t_apply_set") + row.ip, "ok"); App.refreshStatus(); App.refreshConfig();
