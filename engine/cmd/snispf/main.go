@@ -375,8 +375,11 @@ func watchWAN(ctx context.Context, ifaceCfg, probeIP string, onCritical func(str
 			return
 		case <-t.C:
 			name, ip := resolve()
-			if name == "" {
-				candCount = 0 // no WAN right now (antenna down) — wait, don't thrash
+			if name == "" || ip == "" {
+				// No usable WAN right now — auto found none, or a forced interface
+				// is down. WAIT for it to come back instead of rebinding to a dead
+				// interface (and never switch away from a forced one).
+				candCount = 0
 				continue
 			}
 			if name == lastName && ip == lastIP {
