@@ -1,6 +1,6 @@
 {
-  "version": "v0.1.1",
-  "versionCode": 11,
-  "zipUrl": "https://github.com/AlirezaParsi/snispf/releases/download/v0.1.1/snispf-v0.1.1.zip",
+  "version": "v0.1.2",
+  "versionCode": 12,
+  "zipUrl": "https://github.com/AlirezaParsi/snispf/releases/download/v0.1.2/snispf-v0.1.2.zip",
   "changelog": "https://raw.githubusercontent.com/AlirezaParsi/snispf/main/changelog.md"
 }

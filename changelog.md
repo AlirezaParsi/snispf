@@ -4,6 +4,11 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.2
+### Smarter scanner + tougher resilience
+- **Custom scan lists** — paste your own IPs and domains in the Scan tab. IPs are probed directly; domains are resolved and tested with the domain as the SNI (great for finding working fake-SNI candidates). See `examples/ips.txt` and `examples/domains.txt`.
+- **Forced/lost WAN now waits** — if you pin a specific `INTERFACE` and it drops (or no WAN is up), the engine waits for it to come back and rebinds, instead of switching away or thrashing. `auto` still switches to a working interface.
+
 ## v0.1.1
 ### Resilience + in-app updates + WebUI polish
 - **Auto-recovery on network change** — when the antenna reconnects or mobile/Wi-Fi rotates the WAN, the engine re-detects the live interface and rebinds the injector automatically (debounced); the daemon and listener stay up, no manual restart.
