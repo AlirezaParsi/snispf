@@ -1,0 +1,17 @@
+{
+  "LISTEN_HOST": "0.0.0.0",
+  "LISTEN_PORT": 40443,
+  "LOG_LEVEL": "info",
+  "CONNECT_IP": "104.19.229.21",
+  "CONNECT_PORT": 443,
+  "FAKE_SNI": "hcaptcha.com",
+  "BYPASS_METHOD": "wrong_seq",
+  "FRAGMENT_STRATEGY": "sni_split",
+  "FRAGMENT_DELAY": 0.05,
+  "USE_TTL_TRICK": false,
+  "FAKE_SNI_METHOD": "raw_inject",
+  "PROBE_TIMEOUT_MS": 2500,
+  "WRONG_SEQ_CONFIRM_TIMEOUT_MS": 2000,
+  "INTERFACE": "auto",
+  "UTLS": "firefox"
+}

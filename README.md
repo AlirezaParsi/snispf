@@ -6,6 +6,12 @@ SNISPF is a local TCP forwarder. Point your client (v2rayNG, browser, anything) 
 
 Because it runs as a **root daemon (uid 0)**, it sits outside per-app VPNs and can use `CAP_NET_RAW` for the strongest bypass, and (with `INTERFACE: auto`) binds to the physical WAN to escape even a full-tunnel VPN.
 
+## Screenshots
+
+| Status | Scan | Config | Logs |
+|:---:|:---:|:---:|:---:|
+| <img src="https://raw.githubusercontent.com/AlirezaParsi/snispf/screenshots/Status.png" width="190"> | <img src="https://raw.githubusercontent.com/AlirezaParsi/snispf/screenshots/Scan.png" width="190"> | <img src="https://raw.githubusercontent.com/AlirezaParsi/snispf/screenshots/Config.png" width="190"> | <img src="https://raw.githubusercontent.com/AlirezaParsi/snispf/screenshots/Logs.png" width="190"> |
+
 ---
 
 ## Features
@@ -61,7 +67,7 @@ bash build.sh            # -> snispf.zip (arm64 + arm)
 
 Tagging `vX.Y.Z` triggers the GitHub Actions workflow that builds the zip and attaches it to a release.
 
-The engine source is under [`engine/`](engine/); the module wrapper (scripts, `webroot/`) is at the root.
+Layout: [`engine/`](engine/) (Go source), [`module/`](module/) (Magisk/KSU scaffolding — `module.prop`, `customize.sh`, `service.sh`…), [`webroot/`](webroot/) (WebUI), [`examples/`](examples/) (scan lists). `build.sh` stages them into the zip.
 
 ---
 

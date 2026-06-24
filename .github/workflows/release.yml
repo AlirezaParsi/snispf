@@ -49,8 +49,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git checkout main
-          VER=$(grep '^version=' module.prop | cut -d= -f2)
-          CODE=$(grep '^versionCode=' module.prop | cut -d= -f2)
+          VER=$(grep '^version=' module/module.prop | cut -d= -f2)
+          CODE=$(grep '^versionCode=' module/module.prop | cut -d= -f2)
           cat > update.json <<JSON
           {
             "version": "$VER",
