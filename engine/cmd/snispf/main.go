@@ -274,6 +274,13 @@ func main() {
 		printRuntimeModeHint(rt.cfg, rt.injector != nil)
 	}
 
+	// Resilience: rebind automatically when the physical WAN changes (antenna
+	// reconnect, mobile rmnet rotation, Wi-Fi handover) instead of silently
+	// breaking new connections. The listener/daemon stay up throughout.
+	if strings.TrimSpace(cfg.Interface) != "" {
+		go watchWAN(rootCtx, cfg.Interface, cfg.ConnectIP, onCriticalRestart)
+	}
+
 	lastRestartAt := time.Time{}
 	restartBurst := 0
 
@@ -340,6 +347,51 @@ func main() {
 			for i := range runtimes {
 				rt := runtimes[i]
 				printRuntimeModeHint(rt.cfg, rt.injector != nil)
+			}
+		}
+	}
+}
+
+// watchWAN triggers a runtime rebuild when the physical WAN device or its IP
+// changes, so the raw injector + dial rebind to the live interface. Debounced
+// (new value must persist two ticks) to ride out brief flaps and stay clear of
+// the restart-burst guard.
+func watchWAN(ctx context.Context, ifaceCfg, probeIP string, onCritical func(string)) {
+	resolve := func() (string, string) {
+		name := strings.TrimSpace(ifaceCfg)
+		if strings.EqualFold(name, "auto") {
+			name = netutil.PhysicalWANInterface(probeIP)
+		}
+		return name, netutil.InterfaceIPv4(name)
+	}
+	lastName, lastIP := resolve()
+	var candName, candIP string
+	candCount := 0
+	t := time.NewTicker(6 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			name, ip := resolve()
+			if name == "" {
+				candCount = 0 // no WAN right now (antenna down) — wait, don't thrash
+				continue
+			}
+			if name == lastName && ip == lastIP {
+				candCount = 0
+				continue
+			}
+			if name == candName && ip == candIP {
+				candCount++
+			} else {
+				candName, candIP, candCount = name, ip, 1
+			}
+			if candCount >= 2 {
+				logx.Warnf("WAN change %s/%s -> %s/%s; rebinding injector", lastName, lastIP, name, ip)
+				lastName, lastIP, candCount = name, ip, 0
+				onCritical("wan_changed")
 			}
 		}
 	}

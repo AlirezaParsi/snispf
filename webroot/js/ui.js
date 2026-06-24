@@ -97,8 +97,12 @@
   // bottom-sheet list picker. opts: { title, items:[{value,text}], value, onPick }
   function openSheet(opts) {
     var overlay = el("div.sheet-overlay");
-    var sheet = el("div.sheet", null, [el("div.sheet__handle", { "aria-hidden": "true" })]);
-    if (opts.title) sheet.appendChild(el("div.sheet__title", null, [opts.title]));
+    var sheet = el("div.sheet");
+    // drag zone (handle + title) — grab it to pull the sheet down to dismiss
+    var header = el("div.sheet__header", null, [el("div.sheet__handle", { "aria-hidden": "true" })]);
+    if (opts.title) header.appendChild(el("div.sheet__title", null, [opts.title]));
+    sheet.appendChild(header);
+
     var list = el("div.sheet__list");
     (opts.items || []).forEach(function (it) {
       var sel = it.value === opts.value;
@@ -115,6 +119,22 @@
       setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 220);
     }
     overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+
+    // drag-to-dismiss from the header
+    var startY = 0, dy = 0, dragging = false;
+    header.addEventListener("touchstart", function (e) { startY = e.touches[0].clientY; dy = 0; dragging = true; sheet.style.transition = "none"; }, { passive: true });
+    header.addEventListener("touchmove", function (e) {
+      if (!dragging) return;
+      dy = e.touches[0].clientY - startY; if (dy < 0) dy = 0;
+      sheet.style.transform = "translateY(" + dy + "px)";
+    }, { passive: true });
+    header.addEventListener("touchend", function () {
+      if (!dragging) return;
+      dragging = false; sheet.style.transition = "";
+      if (dy > 90) { close(); } else { sheet.style.transform = "translateY(0)"; }
+      dy = 0;
+    });
+
     document.body.appendChild(overlay);
     setTimeout(function () { overlay.classList.add("is-open"); }, 10);
     return close;

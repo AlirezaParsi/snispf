@@ -270,6 +270,7 @@ input:focus, select:focus { outline: none; border-color: var(--green); box-shado
   transform: translateY(100%); transition: transform .26s cubic-bezier(.2,.8,.2,1);
 }
 .sheet-overlay.is-open .sheet { transform: translateY(0); }
+.sheet__header { touch-action: none; cursor: grab; user-select: none; }
 .sheet__handle { width: 38px; height: 4px; border-radius: 2px; background: var(--line-2); margin: 8px auto 6px; }
 .sheet__title { padding: 6px 20px 10px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-weight: 700; }
 .sheet__list { display: flex; flex-direction: column; }

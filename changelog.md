@@ -5,8 +5,10 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 ---
 
 ## v0.1.1
-### In-app updates + WebUI polish
+### Resilience + in-app updates + WebUI polish
+- **Auto-recovery on network change** — when the antenna reconnects or mobile/Wi-Fi rotates the WAN, the engine re-detects the live interface and rebinds the injector automatically (debounced); the daemon and listener stay up, no manual restart.
 - **OTA updates** — the module now reports updates to your root manager (`updateJson`), so future versions install in-place.
+- **Draggable pickers** — the setting pop-up sheets can be swiped down (grab the handle) to dismiss.
 - **WebUI** — fixed tabs (no page scroll; long content scrolls inside its own card), tap-to-open list pickers for selectable settings, WAN-interface picker populated from the device, ping shown next to scan results, and the scanner keeps its state when you switch tabs.
 - **Themes & language** — AMOLED-black dark + light themes, English + Persian (فارسی, RTL text), offline-bundled fonts (Inter / Vazirmatn), edge-to-edge layout.
 - **Health probe** binds to the WAN, so latency is the real edge RTT (no more 0 ms behind a VPN).

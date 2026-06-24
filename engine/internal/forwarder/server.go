@@ -136,7 +136,11 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 			// so multi-WAN route changes are reflected without process restart.
 			bindIP = dynamicIP
 		}
-		if s.Injector != nil && s.InterfaceIP != "" && strings.TrimSpace(dynamicIP) != "" && dynamicIP != s.InterfaceIP {
+		// Only meaningful in legacy route-bound mode (InterfaceName==""). When we
+		// pin to a device (INTERFACE/auto), the route IP legitimately differs
+		// from our bound WAN IP (e.g. a VPN tun owns the default route), so this
+		// would false-positive — WAN changes are handled by the wan-watcher.
+		if s.Injector != nil && s.InterfaceName == "" && s.InterfaceIP != "" && strings.TrimSpace(dynamicIP) != "" && dynamicIP != s.InterfaceIP {
 			logx.Warnf("raw injector route-change detected old_local_ip=%s new_local_ip=%s endpoint=%s; restart service to rebind injector", s.InterfaceIP, dynamicIP, selected.IP)
 		}
 
