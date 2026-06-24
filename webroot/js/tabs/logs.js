@@ -38,7 +38,16 @@
         var s = asText(d).trim();
         box.textContent = s || t("logs_empty");
         box.scrollTop = box.scrollHeight;
-      }).catch(function (err) { box.textContent = err.message; });
+      }).catch(function (err) {
+        // Control API down (daemon never came up / died) — fall back to the
+        // on-disk boot log so the real reason shows instead of just the
+        // "connection refused" from the API call.
+        App.api.serviceLog(400).then(function (s) {
+          s = (s || "").trim();
+          box.textContent = s ? (t("logs_offline_hint") + "\n\n" + s) : err.message;
+          box.scrollTop = box.scrollHeight;
+        }).catch(function () { box.textContent = err.message; });
+      });
     }
   });
 })();

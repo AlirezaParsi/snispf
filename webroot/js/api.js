@@ -93,7 +93,17 @@
     },
     test:      function (apply) { return request("GET", "/v1/test" + (apply ? "?apply=1" : ""), null, 260); },
     testStart: function () { return request("POST", "/v1/test/start", null, 20); },
-    testStatus:function () { return request("GET", "/v1/test/status", null, 15); }
+    testStatus:function () { return request("GET", "/v1/test/status", null, 15); },
+    // Read the on-disk boot log straight off the filesystem — works even when
+    // the control API is dead (which is exactly when you need to see why).
+    serviceLog: function (n) {
+      if (App.state.bridge === "preview") return Promise.resolve("[preview] no on-disk log");
+      return queued(function () {
+        var path = "/data/adb/snispf/service.log";
+        return exec("busybox tail -n " + (n || 400) + " " + shq(path) + " 2>/dev/null")
+          .then(function (r) { return r.stdout || ""; });
+      });
+    }
   };
 
   /* ---- preview/mock so the UI renders in a desktop browser ---- */

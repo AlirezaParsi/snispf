@@ -4,6 +4,11 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.3
+### Magisk fix — daemon stays up
+- **Fixes the daemon dying on Magisk** (control API "connection refused" / WebUI stuck OFFLINE). The boot service now detaches the daemon into its own session (`setsid`) and the daemon ignores `SIGHUP`, so Magisk tearing down the boot-service process group no longer kills it. KernelSU / APatch were unaffected.
+- **Logs tab self-diagnoses** — when the control API is unreachable, the Logs tab now falls back to the on-disk boot log (`/data/adb/snispf/service.log`), so a startup failure shows its real reason instead of just "connection refused".
+
 ## v0.1.2
 ### Smarter scanner + tougher resilience
 - **Custom scan lists** — paste your own IPs and domains in the Scan tab. IPs are probed directly; domains are resolved and tested with the domain as the SNI (great for finding working fake-SNI candidates). See `examples/ips.txt` and `examples/domains.txt`.

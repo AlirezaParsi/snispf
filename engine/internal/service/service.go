@@ -93,6 +93,8 @@ type wrongSeqHealthStats struct {
 
 // Run starts the HTTP control service that manages the proxy core process.
 func Run(cfgPath, addr, token string, parentPID int, parentStartUnixMS int64, apiVersion string) error {
+	ignoreHangup() // survive the boot-service shell exiting (Magisk SIGHUP)
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return err

@@ -17,7 +17,12 @@ sleep 5
 
 echo "[service] starting control daemon on $ADDR" >> "$LOG"
 # Control service supervises the proxy core child; start/stop via /v1/*.
-"$BIN" --service --service-addr "$ADDR" --config "$CFG" >> "$LOG" 2>&1 &
+# Detach into its OWN session (setsid) and ignore SIGHUP (nohup): when this
+# boot-service shell exits, Magisk sends SIGHUP to the service process group,
+# which would otherwise kill the daemon (the Go service only traps SIGINT).
+# KernelSU/APatch tolerate the un-detached child; Magisk does not — without
+# this the API comes up at boot then dies, giving "connection refused".
+nohup busybox setsid "$BIN" --service --service-addr "$ADDR" --config "$CFG" >> "$LOG" 2>&1 &
 
 # Wait for the API to come up, then autostart the proxy core from config.
 i=0
