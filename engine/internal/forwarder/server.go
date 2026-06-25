@@ -30,6 +30,8 @@ type Server struct {
 	LoadBalance      string
 	AutoFailover     bool
 	FailoverRetries  int
+	FakeSNIPool      []string // rotate decoy SNI per connection (empty = endpoint SNI)
+	UTLSPool         []string // rotate fake-hello fingerprint per connection (empty = UTLS)
 	InterfaceIP      string
 	InterfaceName    string // WAN device for SO_BINDTODEVICE (escapes a VPN tun)
 	Strategy         bypass.Strategy
@@ -164,7 +166,7 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 				if reserveErr != nil {
 					break
 				}
-				if !s.Injector.RegisterPort(p, tlsutil.BuildClientHello(selected.SNI)) {
+				if !s.Injector.RegisterPort(p, s.fakeHelloFor(selected.SNI)) {
 					// Collision: another flow already owns this port. Try again.
 					continue
 				}
@@ -347,4 +349,31 @@ func reserveTCPPort(laddr *net.TCPAddr) (int, error) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 	return port, nil
+}
+
+// fakeHelloFor builds the decoy ClientHello for one wrong_seq connection,
+// rotating the decoy SNI and/or fingerprint across the configured pools so a DPI
+// can't pin a single decoy/fingerprint over time. baseSNI is the endpoint's
+// decoy; pools are opt-in (empty = no rotation). The fake must fit one segment,
+// so an oversized rotated combo falls back to the base SNI + default fingerprint.
+func (s *Server) fakeHelloFor(baseSNI string) []byte {
+	sni := baseSNI
+	if n := len(s.FakeSNIPool); n > 0 {
+		if v := strings.TrimSpace(s.FakeSNIPool[rand.Intn(n)]); v != "" {
+			sni = v
+		}
+	}
+	fp := tlsutil.Fingerprint()
+	if n := len(s.UTLSPool); n > 0 {
+		fp = strings.TrimSpace(s.UTLSPool[rand.Intn(n)])
+	}
+	hello := tlsutil.BuildClientHelloFP(sni, fp)
+	if len(hello) > config.MaxFakeHelloBytes {
+		hello = tlsutil.BuildClientHelloFP(baseSNI, tlsutil.Fingerprint())
+		logx.Debugf("fake hello rotated combo too large; fell back base_sni=%q size=%d", baseSNI, len(hello))
+	}
+	if len(s.FakeSNIPool) > 0 || len(s.UTLSPool) > 0 {
+		logx.Debugf("fake hello decoy_sni=%q fp=%q size=%d", sni, fp, len(hello))
+	}
+	return hello
 }

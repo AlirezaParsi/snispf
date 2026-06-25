@@ -4,6 +4,10 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.7
+### Decoy + fingerprint rotation
+- **Per-connection decoy rotation** — set `FAKE_SNI_POOL` (a list of clean decoy SNIs) and/or `UTLS_POOL` (a list of fingerprints) in the config to rotate the fake ClientHello's SNI and browser fingerprint on every connection, so a DPI can't learn and block a single decoy/fingerprint over time. Opt-in: empty pools keep the current single decoy. wrong_seq-safe — a rotated combo whose fake hello exceeds the one-segment limit falls back automatically. Verified on-device: decoy + fingerprint rotate per connection with no effect on confirmation.
+
 ## v0.1.6
 ### wrong_seq stays strict + re-injects the fake
 - **The fake ClientHello is now re-injected** (up to 4×, 250 ms apart) until the server's dup-ack confirms it landed. A single fake can be lost to strict conntrack or transient drops; without the dup-ack the flow timed out and the connection was dropped ("ping but no real-delay"). The happy path is unchanged — if the first inject confirms, nothing extra is sent.

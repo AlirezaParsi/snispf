@@ -3,6 +3,7 @@ package tlsutil
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"strings"
 )
 
 var cipherSuites = mustHex(
@@ -77,7 +78,15 @@ func buildPaddingExtension(targetLength, currentLength int) []byte {
 // hello; otherwise it falls back to the legacy hand-built template. uTLS build
 // errors also fall back, so the fake hello is never empty.
 func BuildClientHello(sni string) []byte {
-	if id, ok := clientHelloID(Fingerprint()); ok {
+	return BuildClientHelloFP(sni, Fingerprint())
+}
+
+// BuildClientHelloFP builds the fake ClientHello for sni using an explicit
+// fingerprint name, without touching the process-wide setting — so callers can
+// rotate the fingerprint per connection. Unknown / "none" names (or a uTLS
+// build failure) fall back to the legacy builder.
+func BuildClientHelloFP(sni, fpName string) []byte {
+	if id, ok := clientHelloID(strings.ToLower(strings.TrimSpace(fpName))); ok {
 		if rec, err := buildUTLSClientHelloRecord(sni, id); err == nil {
 			return rec
 		}

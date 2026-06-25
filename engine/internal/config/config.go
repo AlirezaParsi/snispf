@@ -26,6 +26,14 @@ type Config struct {
 	// firefox|chrome|safari|ios|edge|randomized, or "none"/"" for the legacy
 	// hand-built hello.
 	UTLS string `json:"UTLS,omitempty"`
+	// FakeSNIPool, when non-empty, rotates the decoy SNI of the fake hello per
+	// connection (round-robin) so a DPI can't learn/block a single decoy. Each
+	// entry should be a known-clean SNI. Empty = use the endpoint's FAKE_SNI.
+	FakeSNIPool []string `json:"FAKE_SNI_POOL,omitempty"`
+	// UTLSPool, when non-empty, rotates the fake-hello fingerprint per connection
+	// among these presets. Empty = use UTLS. For wrong_seq, entries whose fake
+	// hello exceeds the one-segment limit are skipped at runtime.
+	UTLSPool []string `json:"UTLS_POOL,omitempty"`
 }
 
 // Listener represents a single listener configuration in multi-listener mode.

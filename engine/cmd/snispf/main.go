@@ -17,8 +17,8 @@ import (
 	"snispf/internal/config"
 	"snispf/internal/forwarder"
 	"snispf/internal/logx"
-	"snispf/internal/netutil"
 	"snispf/internal/matrix"
+	"snispf/internal/netutil"
 	"snispf/internal/platform"
 	"snispf/internal/rawinjector"
 	"snispf/internal/scan"
@@ -27,6 +27,7 @@ import (
 )
 
 var version = "1.1.0-go"
+
 const apiVersion = "v1"
 
 const banner = `
@@ -545,6 +546,8 @@ func buildSingleRuntime(baseCfg config.Config, noRaw bool, probeAlreadyDone bool
 		LoadBalance:     cfg.LoadBalance,
 		AutoFailover:    cfg.AutoFailover,
 		FailoverRetries: cfg.FailoverRetries,
+		FakeSNIPool:     cfg.FakeSNIPool,
+		UTLSPool:        cfg.UTLSPool,
 		InterfaceIP:     interfaceIP,
 		InterfaceName:   ifName,
 		Strategy:        strategy,
