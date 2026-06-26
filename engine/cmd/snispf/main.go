@@ -294,6 +294,7 @@ func main() {
 
 	lastRestartAt := time.Time{}
 	restartBurst := 0
+	lastSwapAt := time.Time{}
 
 	for {
 		runCtx, cancelRun := context.WithCancel(rootCtx)
@@ -326,24 +327,6 @@ func main() {
 			}
 			log.Fatal(runErr)
 		case reason := <-restartReqCh:
-			now := time.Now()
-			if !lastRestartAt.IsZero() && now.Sub(lastRestartAt) < 20*time.Second {
-				restartBurst++
-			} else {
-				restartBurst = 1
-			}
-			lastRestartAt = now
-			if restartBurst > 3 {
-				cancelRun()
-				for i := range runtimes {
-					if runtimes[i].injector != nil {
-						runtimes[i].injector.Stop()
-					}
-				}
-				log.Fatalf("internal recovery aborted: repeated restart loop detected reason=%s", reason)
-			}
-
-			logx.Warnf("internal recovery requested reason=%s action=rebuild_runtimes burst=%d", reason, restartBurst)
 			cancelRun()
 			for i := range runtimes {
 				if runtimes[i].injector != nil {
@@ -351,9 +334,64 @@ func main() {
 				}
 			}
 
-			runtimes, err = buildServerRuntimes(cfg, *noRaw, onCriticalRestart)
-			if err != nil {
-				log.Fatal(err)
+			// Auto-swap: a persistently failing endpoint (not WAN churn) → try a
+			// faster/working CF edge from the hit-list before rebuilding. Only for a
+			// single-endpoint wrong_seq config (the injector is single-remote), and
+			// throttled to once per 30s so a bad network doesn't thrash the edge.
+			endpointFailed := reason == "all_endpoints_failed_confirmation" || reason == "upstream_unreachable"
+			if endpointFailed && cfg.AutoSwapEnabled() && cfg.BypassMethod == "wrong_seq" &&
+				len(config.EnabledEndpoints(cfg.Endpoints)) <= 1 && time.Since(lastSwapAt) > 30*time.Second {
+				if autoSwapEndpoint(rootCtx, &cfg, cfgPath) {
+					lastSwapAt = time.Now()
+				}
+			}
+
+			// A WAN change (mobile cell/IP rotation) is legitimate environmental
+			// churn, not a crash loop — rebuild without counting it toward the
+			// backoff, however often it flaps. Other reasons (e.g. repeated
+			// confirmation failure) get an escalating backoff so a genuinely broken
+			// state doesn't hammer rebuilds — but the core is NEVER killed: a dead
+			// core strands the tunnel with no recovery (the service does not restart
+			// it), so we back off and keep retrying instead of the old log.Fatal.
+			if reason != "wan_changed" {
+				now := time.Now()
+				if !lastRestartAt.IsZero() && now.Sub(lastRestartAt) < 20*time.Second {
+					restartBurst++
+				} else {
+					restartBurst = 1
+				}
+				lastRestartAt = now
+				if restartBurst > 3 {
+					backoff := time.Duration(restartBurst-3) * 5 * time.Second
+					if backoff > 30*time.Second {
+						backoff = 30 * time.Second
+					}
+					logx.Warnf("internal recovery backing off reason=%s burst=%d sleep=%s", reason, restartBurst, backoff)
+					select {
+					case <-rootCtx.Done():
+						return
+					case <-time.After(backoff):
+					}
+				}
+			}
+
+			logx.Warnf("internal recovery requested reason=%s action=rebuild_runtimes burst=%d", reason, restartBurst)
+
+			// Retry the rebuild instead of dying on a transient build error (e.g. a
+			// WAN-down race where the raw injector can't bind yet). Keeps the core
+			// alive until the interface comes back.
+			for {
+				var berr error
+				runtimes, berr = buildServerRuntimes(cfg, *noRaw, onCriticalRestart)
+				if berr == nil {
+					break
+				}
+				logx.Warnf("runtime rebuild failed reason=%s err=%v; retry in 5s", reason, berr)
+				select {
+				case <-rootCtx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
 			}
 			for i := range runtimes {
 				runtimes[i].server.Counters = counters
@@ -392,6 +430,45 @@ func writeStatsLoop(ctx context.Context, cfgPath string, c *forwarder.Counters) 
 			write()
 		}
 	}
+}
+
+// autoSwapEndpoint re-scans the hit-list (known survivors only, so it's fast)
+// for a faster/working CF edge and swaps the single endpoint to it when the
+// current one keeps failing confirmation. It mutates cfg in place and persists
+// the change (atomic write), returning whether it swapped. The caller gates this
+// to single-endpoint wrong_seq configs.
+func autoSwapEndpoint(ctx context.Context, cfg *config.Config, cfgPath string) bool {
+	ifName := strings.TrimSpace(cfg.Interface)
+	if strings.EqualFold(ifName, "auto") {
+		ifName = netutil.PhysicalWANInterface(cfg.ConnectIP)
+	}
+	hitsPath := filepath.Join(filepath.Dir(cfgPath), "cf_hits.json")
+	rep, err := scan.Run(ctx, scan.Options{
+		HitsPath:  hitsPath,
+		HitsOnly:  true, // probe only known-good survivors — fast (no range sweep)
+		SNI:       cfg.FakeSNI,
+		Interface: ifName,
+		Timeout:   time.Duration(cfg.ProbeTimeoutMS) * time.Millisecond,
+		Save:      true,
+	})
+	if err != nil {
+		logx.Warnf("auto-swap: hit-list scan failed: %v", err)
+		return false
+	}
+	best := rep.Best
+	if best == nil || best.IP == "" || best.IP == cfg.ConnectIP {
+		return false // nothing better than (or different from) the current endpoint
+	}
+	old := cfg.ConnectIP
+	cfg.ConnectIP = best.IP
+	if len(cfg.Endpoints) > 0 {
+		cfg.Endpoints[0].IP = best.IP
+	}
+	if err := config.Write(cfgPath, *cfg); err != nil {
+		logx.Warnf("auto-swap: persist failed (still using new endpoint in-memory): %v", err)
+	}
+	logx.Infof("auto-swap: endpoint %s -> %s (rtt=%.0fms)", old, best.IP, best.RTTMS)
+	return true
 }
 
 // watchWAN triggers a runtime rebuild when the physical WAN device or its IP

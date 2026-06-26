@@ -4,6 +4,12 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.9
+### Survives WAN flaps + auto-swaps to the fastest edge
+- **The tunnel no longer dies when the mobile WAN flaps.** On a network that rotates cells/IPs (rmnet rotation), each change rebuilds the runtime to rebind the injector — but a rapid flap storm used to trip an internal guard that killed the whole core (`exit status 1`, tunnel stuck off until you reopened it, since nothing restarts a dead core). Now WAN changes never count as a crash loop, other failures back off instead of aborting, and a transient rebuild error retries — the core stays alive and recovers on its own. Verified on-device through a live flap storm: continuous rebuilds, zero deaths.
+- **Auto-swap to the fastest working edge** (`AUTO_SWAP`, on by default). When the current `wrong_seq` endpoint keeps failing confirmation, the core re-scans your hit-list (known-good survivors only — fast) and switches to the lowest-RTT edge that still passes, then rebuilds. Throttled to once per 30s so a bad network can't thrash. Single-endpoint only (the one wrong_seq supports); set `"AUTO_SWAP": false` to pin your endpoint. Run a scan first so there's a hit-list to swap from.
+- Config is now written atomically (no chance of a half-written `config.json` when the core auto-swap and the WebUI save overlap).
+
 ## v0.1.8
 ### Live speed, self-pruning decoys, no busybox dependency
 - **Real-time speed + data usage on the Status tab** — download/upload throughput and total data used now show alongside connected devices, updated every ~2.5s while connected. The core flushes byte counters; the WebUI derives the live rate.

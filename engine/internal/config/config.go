@@ -19,6 +19,10 @@ type Config struct {
 	EndpointProbe            bool       `json:"ENDPOINT_PROBE,omitempty"`
 	AutoFailover             bool       `json:"AUTO_FAILOVER,omitempty"`
 	FailoverRetries          int        `json:"FAILOVER_RETRIES,omitempty"`
+	// AutoSwap, when set, lets a single-endpoint wrong_seq core re-scan the
+	// hit-list and switch to a faster/working CF edge when the current one keeps
+	// failing confirmation. Default true (DefaultConfig).
+	AutoSwap *bool `json:"AUTO_SWAP,omitempty"`
 	ProbeTimeoutMS           int        `json:"PROBE_TIMEOUT_MS,omitempty"`
 	WrongSeqConfirmTimeoutMS int        `json:"WRONG_SEQ_CONFIRM_TIMEOUT_MS,omitempty"`
 	Interface                string     `json:"INTERFACE,omitempty"`
@@ -81,3 +85,7 @@ var DefaultConfig = Config{
 	ProbeTimeoutMS:           2500,
 	WrongSeqConfirmTimeoutMS: 2000,
 }
+
+// AutoSwapEnabled reports whether endpoint auto-swap is on. Default true: it is
+// active unless the config explicitly sets AUTO_SWAP=false.
+func (c Config) AutoSwapEnabled() bool { return c.AutoSwap == nil || *c.AutoSwap }

@@ -19,13 +19,20 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// Write serializes the config as indented JSON and writes it to a file.
+// Write serializes the config as indented JSON and writes it atomically (write
+// a temp file, then rename) so a concurrent reader — or the other process (the
+// core auto-swap vs the service control API both write this file) — never sees a
+// truncated/partial config.
 func Write(path string, cfg Config) error {
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // LoadOrDefault loads from the given path if it exists, otherwise returns DefaultConfig.
