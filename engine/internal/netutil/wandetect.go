@@ -11,19 +11,27 @@ var wanPrefixes = []string{"rmnet", "wlan", "wifi", "eth", "en", "wwan", "ccmni"
 
 // PhysicalWANInterface picks the live physical WAN device, skipping VPN tuns.
 // Mobile interface names rotate (rmnet_data1/2 shuffle) and the default route
-// often points at the tun, so when upstreamIP is given we probe each candidate
-// with a device-bound dial and return the first that actually connects. Falls
-// back to the first physical candidate. Returns "" if none found.
+// often points at the tun, so when upstreamIP is given we probe EVERY candidate
+// with a device-bound dial and return the one that connects FASTEST. Probing all
+// (not just the first that connects) avoids a zombie rmnet left over from a SIM
+// hot-swap — it has a stale IP that either won't connect or routes via a dead
+// path (slow), so the live PDP wins. Falls back to the first physical candidate.
+// Returns "" if none found.
 func PhysicalWANInterface(upstreamIP string) string {
 	cands := physicalCandidates()
 	if len(cands) == 0 {
 		return ""
 	}
 	if strings.TrimSpace(upstreamIP) != "" {
+		best := ""
+		var bestRTT time.Duration
 		for _, dev := range cands {
-			if dialBound(dev, upstreamIP, 1500*time.Millisecond) {
-				return dev
+			if rtt, ok := dialBoundRTT(dev, upstreamIP, 1500*time.Millisecond); ok && (best == "" || rtt < bestRTT) {
+				best, bestRTT = dev, rtt
 			}
+		}
+		if best != "" {
+			return best
 		}
 	}
 	return cands[0]
@@ -89,17 +97,20 @@ func physicalCandidates() []string {
 	return out
 }
 
-func dialBound(dev, upstreamIP string, to time.Duration) bool {
+// dialBoundRTT dials upstreamIP:443 bound to dev and returns the connect time.
+// ok is false if the bound dial fails (dead/zombie interface, or no path).
+func dialBoundRTT(dev, upstreamIP string, to time.Duration) (time.Duration, bool) {
 	d := net.Dialer{Timeout: to}
 	if ctrl := BindToDeviceControl(dev); ctrl != nil {
 		d.Control = ctrl
 	}
+	start := time.Now()
 	c, err := d.Dial("tcp4", net.JoinHostPort(upstreamIP, "443"))
 	if err != nil {
-		return false
+		return 0, false
 	}
 	_ = c.Close()
-	return true
+	return time.Since(start), true
 }
 
 func ipv4Of(ifc net.Interface) string {

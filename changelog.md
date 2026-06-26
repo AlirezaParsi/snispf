@@ -4,6 +4,10 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.2.2
+### Smarter WAN pick — avoids a dead/zombie SIM interface
+- **Auto WAN now probes every candidate and picks the fastest-connecting one**, instead of the first that answers. On a dual-SIM phone (or after a live SIM hot-swap that leaves an orphaned `rmnet` interface behind — a known ROM quirk: the old interface stays UP with a stale/empty route until reboot), the dead one no longer gets chosen just because it was listed first. The interface that actually reaches the upstream wins. Note: if the underlying cellular link is lossy/high-latency (common during a shutdown), connections can still stall mid-stream — that's the network, not the tunnel; a reboot is still the cleanest fix for a truly orphaned interface.
+
 ## v0.2.1
 ### Critical: proxy no longer hangs under load (fixes v0.2.0)
 - **Connections are served concurrently again.** v0.2.0's new persistent listener accidentally handled connections one-at-a-time — under an app like v2rayNG that opens many connections at once (and with a slow upstream), they piled up unaccepted and the proxy looked dead ("real-delay fails / network down"). Each connection now gets its own goroutine, as before. This was the main cause of v0.2.0 feeling broken.
