@@ -1,7 +1,8 @@
 /* api.js — the bridge to the snispf control daemon.
-   KsuWebUI's WebView can't fetch() localhost cleartext (CSP), so every call
-   shells `busybox wget` through ksu.exec (busybox always ships with KSU/Magisk;
-   curl does not). One simple command per call — no compound shell. */
+   The WebView can't fetch() localhost cleartext (CSP), so every call shells an
+   HTTP client through ksu.exec. curl ships in /system/bin on Android (busybox
+   does NOT, in some Magisk contexts), so curl is primary with `busybox wget` as
+   a fallback: `curl ... || busybox wget ...` — one exec, tries each in turn. */
 (function () {
   "use strict";
   var App = window.App;
@@ -37,14 +38,23 @@
   function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
   function buildCmd(method, path, bodyObj, timeout) {
-    var url = App.API + path;
-    var cmd = "busybox wget -q -T " + (timeout || 60) + " -O - ";
-    if (App.token) cmd += "--header=" + shq("X-SNISPF-Token: " + App.token) + " ";
-    if (method === "POST") {
-      var body = bodyObj != null ? JSON.stringify(bodyObj) : "";
-      cmd += "--header='Content-Type: application/json' --post-data=" + shq(body) + " ";
-    }
-    return cmd + shq(url);
+    var url = App.API + path, T = timeout || 60;
+    var tok = App.token ? "X-SNISPF-Token: " + App.token : "";
+    var body = method === "POST" ? (bodyObj != null ? JSON.stringify(bodyObj) : "") : null;
+
+    // Primary: curl (always in /system/bin on Android).
+    var curl = "curl -s -m " + T + " ";
+    if (tok) curl += "-H " + shq(tok) + " ";
+    if (body !== null) curl += "-X POST -H 'Content-Type: application/json' --data " + shq(body) + " ";
+    curl += shq(url);
+
+    // Fallback: busybox wget (KSU and older setups ship it).
+    var wget = "busybox wget -q -T " + T + " -O - ";
+    if (tok) wget += "--header=" + shq(tok) + " ";
+    if (body !== null) wget += "--header='Content-Type: application/json' --post-data=" + shq(body) + " ";
+    wget += shq(url);
+
+    return curl + " 2>/dev/null || " + wget;
   }
 
   // Single-flight gate: only ONE ksu.exec runs at a time. Long calls (scan,
@@ -100,7 +110,8 @@
       if (App.state.bridge === "preview") return Promise.resolve("[preview] no on-disk log");
       return queued(function () {
         var path = "/data/adb/snispf/service.log";
-        return exec("busybox tail -n " + (n || 400) + " " + shq(path) + " 2>/dev/null")
+        var nn = n || 400;
+        return exec("tail -n " + nn + " " + shq(path) + " 2>/dev/null || busybox tail -n " + nn + " " + shq(path) + " 2>/dev/null")
           .then(function (r) { return r.stdout || ""; });
       });
     }
@@ -121,7 +132,8 @@
     route: function (method, path, body) {
       if (path === "/v1/status") return { running: this.on, pid: this.on ? 4242 : 0, raw_injection_available: true, architecture: "arm64" };
       if (path === "/v1/clients") return this.on
-        ? { active: 3, peers: 2, clients: [{ ip: "192.168.1.42", conns: 2, local: false }, { ip: "127.0.0.1", conns: 1, local: true }], ports: [40443] }
+        ? { active: 3, peers: 2, clients: [{ ip: "192.168.1.42", conns: 2, local: false }, { ip: "127.0.0.1", conns: 1, local: true }], ports: [40443],
+            bytes_up: Math.floor(Date.now() / 40) % 9000000, bytes_down: Math.floor(Date.now() / 8) % 90000000, stats_ts: Date.now() }
         : { active: 0, peers: 0, clients: [], ports: [40443] };
       if (path === "/v1/interfaces") return { auto: "rmnet_data1", interfaces: [{ name: "rmnet_data1", ip: "22.18.220.25" }, { name: "wlan0", ip: "192.168.1.5" }] };
       if (path === "/v1/health") return { endpoints: [{ ip: this.cfg.CONNECT_IP, sni: this.cfg.FAKE_SNI, healthy: true, latency_ms: 138 }] };

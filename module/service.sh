@@ -35,14 +35,24 @@ echo "[service] starting control daemon on $ADDR" >> "$LOG"
 # which would otherwise kill the daemon (the Go service only traps SIGINT).
 # KernelSU/APatch tolerate the un-detached child; Magisk does not — without
 # this the API comes up at boot then dies, giving "connection refused".
-nohup busybox setsid "$BIN" --service --service-addr "$ADDR" --config "$CFG" >> "$LOG" 2>&1 &
+# Prefer toybox setsid (/system/bin, on every Android); fall back to busybox
+# setsid where toybox lacks it. Magisk does not ship busybox in some contexts,
+# so toybox is the safe default with busybox as a backstop.
+if command -v setsid >/dev/null 2>&1; then
+  nohup setsid "$BIN" --service --service-addr "$ADDR" --config "$CFG" >> "$LOG" 2>&1 &
+else
+  nohup busybox setsid "$BIN" --service --service-addr "$ADDR" --config "$CFG" >> "$LOG" 2>&1 &
+fi
 
 # Wait for the API to come up, then autostart the proxy core from config.
+# Prefer curl (/system/bin on Android); fall back to busybox wget.
 i=0
 while [ "$i" -lt 30 ]; do
-  if busybox wget -q -O- "http://$ADDR/v1/status" >/dev/null 2>&1; then
+  if curl -s -m 5 -o /dev/null "http://$ADDR/v1/status" 2>/dev/null \
+     || busybox wget -q -O- "http://$ADDR/v1/status" >/dev/null 2>&1; then
     echo "[service] control API up" >> "$LOG"
-    busybox wget -q -O- --post-data='' "http://$ADDR/v1/start" >> "$LOG" 2>&1
+    curl -s -m 5 -X POST "http://$ADDR/v1/start" >> "$LOG" 2>&1 \
+      || busybox wget -q -O- --post-data='' "http://$ADDR/v1/start" >> "$LOG" 2>&1
     echo "[service] core start requested" >> "$LOG"
     exit 0
   fi

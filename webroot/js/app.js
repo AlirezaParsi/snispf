@@ -24,7 +24,26 @@
     return App.api.getConfig().then(function (c) { App.set({ config: c }); }).catch(function () {});
   };
   App.refreshClients = function () {
-    return App.api.clients().then(function (c) { App.set({ clients: c }); }).catch(function () {});
+    return App.api.clients().then(function (c) {
+      // Derive live up/down speed from byte/timestamp deltas between polls. The
+      // core writes cumulative bytes + a flush ts; rate = Δbytes / Δt. Skip the
+      // tick when the counter went backwards (core restarted = fresh process) —
+      // just rebaseline so we never show a bogus spike.
+      if (c && typeof c.bytes_up === "number" && c.stats_ts) {
+        var p = App._rate;
+        if (p && c.stats_ts > p.ts && c.bytes_up >= p.up && c.bytes_down >= p.down) {
+          var dt = (c.stats_ts - p.ts) / 1000;
+          if (dt > 0) {
+            c.up_bps = (c.bytes_up - p.up) / dt;
+            c.down_bps = (c.bytes_down - p.down) / dt;
+          }
+        }
+        App._rate = { up: c.bytes_up, down: c.bytes_down, ts: c.stats_ts };
+      } else {
+        App._rate = null;
+      }
+      App.set({ clients: c });
+    }).catch(function () {});
   };
 
   App.togglePower = function () {
@@ -103,6 +122,11 @@
     App.refreshConfig();
     App.refreshStatus();
     setInterval(function () { if (!App.state.busy) App.refreshStatus(); }, 6000);
+    // Faster clients-only poll while running, so the Status tab shows near
+    // real-time up/down speed without waiting on the 6s status cycle.
+    setInterval(function () {
+      if (!App.state.busy && App.running() && App.state.bridge === "ksu") App.refreshClients();
+    }, 2500);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

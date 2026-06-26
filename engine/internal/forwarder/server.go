@@ -20,6 +20,15 @@ import (
 	"snispf/internal/tlsutil"
 )
 
+// Counters accumulates relayed byte totals across all connections (and across
+// runtime rebuilds, since the same pointer is shared with each new Server). Up =
+// client→upstream, Down = upstream→client. The core flushes these to stats.json
+// for the WebUI to derive live throughput.
+type Counters struct {
+	Up   atomic.Uint64
+	Down atomic.Uint64
+}
+
 type Server struct {
 	ListenHost       string
 	ListenPort       int
@@ -36,11 +45,29 @@ type Server struct {
 	InterfaceName    string // WAN device for SO_BINDTODEVICE (escapes a VPN tun)
 	Strategy         bypass.Strategy
 	Injector         rawinjector.Interface
+	Counters         *Counters // shared byte totals for throughput stats (nil = no counting)
 	OnCriticalError  func(reason string)
 	CriticalFailures int
 	lbCounter        atomic.Uint64
 	failureStreak    atomic.Uint64
 	restartSent      atomic.Bool
+	decoys           *decoyPool // health-tracked decoy rotation (built from FakeSNIPool)
+	decoysOnce       sync.Once
+}
+
+// countingReader tallies bytes as they stream through, so a long-lived tunnel
+// connection reports live throughput instead of only a final total at close.
+type countingReader struct {
+	r io.Reader
+	n *atomic.Uint64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.n.Add(uint64(n))
+	}
+	return n, err
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -123,6 +150,7 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 	var lastStrategyErr error
 	for attempt := 0; attempt < totalAttempts; attempt++ {
 		selected = endpoints[(base+attempt)%len(endpoints)]
+		var reservedDecoy string // rotated decoy SNI used this attempt, for health tracking
 
 		raddr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%s:%d", selected.IP, selected.Port))
 		if err != nil {
@@ -166,11 +194,13 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 				if reserveErr != nil {
 					break
 				}
-				if !s.Injector.RegisterPort(p, s.fakeHelloFor(selected.SNI)) {
+				hello, decoy := s.fakeHelloFor(selected.SNI)
+				if !s.Injector.RegisterPort(p, hello) {
 					// Collision: another flow already owns this port. Try again.
 					continue
 				}
 				reservedPort = p
+				reservedDecoy = decoy
 				reserved = true
 				break
 			}
@@ -204,6 +234,9 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 		}
 		if err == nil {
 			applyOK := s.Strategy.Apply(ctx, incoming, outgoing, selected.SNI, first)
+			if reservedDecoy != "" {
+				s.decoys.record(reservedDecoy, applyOK)
+			}
 			if applyOK {
 				break
 			}
@@ -271,18 +304,29 @@ func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 	_ = outgoing.SetKeepAlivePeriod(60 * time.Second)
 	logx.Debugf("selected endpoint ip=%s port=%d sni=%s", selected.IP, selected.Port, selected.SNI)
 
+	// Count relayed bytes for throughput stats. up = client→upstream (incoming
+	// read), down = upstream→client (outgoing read). No-op when Counters is nil.
+	// The first client segment (the ClientHello) was already sent upstream by the
+	// bypass, before the relay loop, so add it to Up here or it would be missed.
+	var upSrc, downSrc io.Reader = incoming, outgoing
+	if s.Counters != nil {
+		s.Counters.Up.Add(uint64(len(first)))
+		upSrc = &countingReader{incoming, &s.Counters.Up}
+		downSrc = &countingReader{outgoing, &s.Counters.Down}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if _, copyErr := io.Copy(outgoing, incoming); copyErr != nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, net.ErrClosed) {
+		if _, copyErr := io.Copy(outgoing, upSrc); copyErr != nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, net.ErrClosed) {
 			logx.Debugf("stream copy incoming->outgoing ended with error: %v", copyErr)
 		}
 		_ = outgoing.CloseWrite()
 	}()
 	go func() {
 		defer wg.Done()
-		if _, copyErr := io.Copy(incoming, outgoing); copyErr != nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, net.ErrClosed) {
+		if _, copyErr := io.Copy(incoming, downSrc); copyErr != nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, net.ErrClosed) {
 			logx.Debugf("stream copy outgoing->incoming ended with error: %v", copyErr)
 		}
 		_ = incoming.CloseWrite()
@@ -356,24 +400,32 @@ func reserveTCPPort(laddr *net.TCPAddr) (int, error) {
 // can't pin a single decoy/fingerprint over time. baseSNI is the endpoint's
 // decoy; pools are opt-in (empty = no rotation). The fake must fit one segment,
 // so an oversized rotated combo falls back to the base SNI + default fingerprint.
-func (s *Server) fakeHelloFor(baseSNI string) []byte {
-	sni := baseSNI
-	if n := len(s.FakeSNIPool); n > 0 {
-		if v := strings.TrimSpace(s.FakeSNIPool[rand.Intn(n)]); v != "" {
-			sni = v
+// It returns the chosen decoy SNI (empty when none was rotated in, i.e. the base
+// decoy was used or a too-large combo fell back) so the caller can attribute the
+// connection's confirm/fail outcome back to that decoy via decoyPool.record.
+func (s *Server) fakeHelloFor(baseSNI string) (hello []byte, decoy string) {
+	s.decoysOnce.Do(func() {
+		if len(s.FakeSNIPool) > 0 {
+			s.decoys = newDecoyPool(s.FakeSNIPool)
 		}
+	})
+	sni := baseSNI
+	if v := s.decoys.pick(); v != "" {
+		sni = v
+		decoy = v
 	}
 	fp := tlsutil.Fingerprint()
 	if n := len(s.UTLSPool); n > 0 {
 		fp = strings.TrimSpace(s.UTLSPool[rand.Intn(n)])
 	}
-	hello := tlsutil.BuildClientHelloFP(sni, fp)
+	hello = tlsutil.BuildClientHelloFP(sni, fp)
 	if len(hello) > config.MaxFakeHelloBytes {
 		hello = tlsutil.BuildClientHelloFP(baseSNI, tlsutil.Fingerprint())
 		logx.Debugf("fake hello rotated combo too large; fell back base_sni=%q size=%d", baseSNI, len(hello))
+		decoy = "" // used the base decoy, not the rotated one — don't attribute to it
 	}
-	if len(s.FakeSNIPool) > 0 || len(s.UTLSPool) > 0 {
+	if s.decoys != nil || len(s.UTLSPool) > 0 {
 		logx.Debugf("fake hello decoy_sni=%q fp=%q size=%d", sni, fp, len(hello))
 	}
-	return hello
+	return hello, decoy
 }

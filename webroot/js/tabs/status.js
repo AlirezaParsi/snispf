@@ -10,6 +10,16 @@
     ]);
   }
 
+  // Human-readable transfer rate (bytes/sec) and size (bytes), binary units.
+  function fmtUnit(n, units) {
+    if (!n || n < 1) return "0 " + units[0];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (n < 10 ? n.toFixed(1) : Math.round(n)) + " " + units[i];
+  }
+  function fmtRate(bps) { return fmtUnit(bps, ["B/s", "KB/s", "MB/s", "GB/s"]); }
+  function fmtBytes(b) { return fmtUnit(b, ["B", "KB", "MB", "GB", "TB"]); }
+
   App.registerTab({
     id: "status",
     label: "nav_status",
@@ -21,8 +31,13 @@
       var s = App.state.status, c = App.state.config, cl = App.state.clients;
       var v = ui.clear(this.view);
 
+      // Drop a stale link-health ping when the upstream IP changed (e.g. a scan
+      // applied a new CONNECT_IP) — the old RTT no longer describes this server.
+      if (c && this.healthIP && c.CONNECT_IP !== this.healthIP) { this.health = null; this.healthIP = null; }
+
       var peers = cl ? (cl.peers || 0) : 0;
       var conns = cl ? (cl.active || 0) : 0;
+      var running = !!(s && s.running);
 
       var mode = App.state.bridge === "probing" ? "connecting"
         : App.state.busy ? "busy" : !s ? "connecting" : s.running ? "running" : "stopped";
@@ -52,10 +67,20 @@
       ]);
 
       v.appendChild(el("div.stats", null, [
-        stat(t("stat_devices"), "users", String(peers), s && s.running && peers ? ".stat__v--green" : ""),
+        stat(t("stat_devices"), "users", String(peers), running && peers ? ".stat__v--green" : ""),
         stat(t("stat_conns"), "activity", String(conns)),
         stat(t("stat_method"), "zap", (c && c.BYPASS_METHOD) || "—"),
         upStat
+      ]));
+
+      // Live throughput + cumulative data, in front of the connected devices.
+      var down = running && cl ? (cl.down_bps || 0) : 0;
+      var up = running && cl ? (cl.up_bps || 0) : 0;
+      var used = running && cl && typeof cl.bytes_up === "number" ? (cl.bytes_up + cl.bytes_down) : 0;
+      v.appendChild(el("div.stats", null, [
+        stat(t("stat_down"), "download", running ? fmtRate(down) : "—", running && down ? ".stat__v--green" : ""),
+        stat(t("stat_up"), "upload", running ? fmtRate(up) : "—"),
+        stat(t("stat_data"), "database", running ? fmtBytes(used) : "—")
       ]));
 
       var body = [];
@@ -77,10 +102,12 @@
       if (this.healthBusy) return;
       this.healthBusy = true; this.render();
       var self = this;
+      var probedIP = (App.state.config || {}).CONNECT_IP || null;
       App.api.health().then(function (h) {
         var ep = h && h.endpoints && h.endpoints[0];
         self.health = ep ? { ok: !!ep.healthy, rtt: ep.latency_ms } : { ok: false };
-      }).catch(function () { self.health = { ok: false }; }).then(function () {
+        self.healthIP = probedIP; // remember which IP this RTT belongs to
+      }).catch(function () { self.health = { ok: false }; self.healthIP = probedIP; }).then(function () {
         self.healthBusy = false; self.render();
       });
     }

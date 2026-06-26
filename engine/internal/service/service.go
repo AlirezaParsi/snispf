@@ -671,13 +671,44 @@ func (s *controlService) handleClients(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(clients, func(i, j int) bool { return clients[i].Conns > clients[j].Conns })
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"api_version": s.apiVersion,
 		"active":      active,
 		"peers":       len(clients),
 		"clients":     clients,
 		"ports":       ports,
-	})
+	}
+	// Merge live byte totals the core flushes to stats.json (separate process).
+	// The WebUI derives up/down speed from successive (bytes, ts) deltas.
+	if up, down, ts, ok := s.readByteStats(); ok {
+		resp["bytes_up"] = up
+		resp["bytes_down"] = down
+		resp["stats_ts"] = ts
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// readByteStats reads the core's stats.json (cumulative relayed bytes + the
+// millisecond timestamp of the flush). ok is false when the file is absent or
+// unreadable (core not running, or pre-first-flush).
+func (s *controlService) readByteStats() (up, down, ts uint64, ok bool) {
+	dir := filepath.Dir(s.cfgPath)
+	if dir == "" || dir == "." {
+		return 0, 0, 0, false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "stats.json"))
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	var st struct {
+		BytesUp   uint64 `json:"bytes_up"`
+		BytesDown uint64 `json:"bytes_down"`
+		TS        uint64 `json:"ts"`
+	}
+	if json.Unmarshal(b, &st) != nil {
+		return 0, 0, 0, false
+	}
+	return st.BytesUp, st.BytesDown, st.TS, true
 }
 
 // handleInterfaces lists physical WAN interfaces for the config picker, plus

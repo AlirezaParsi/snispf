@@ -4,6 +4,13 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.1.8
+### Live speed, self-pruning decoys, no busybox dependency
+- **Real-time speed + data usage on the Status tab** — download/upload throughput and total data used now show alongside connected devices, updated every ~2.5s while connected. The core flushes byte counters; the WebUI derives the live rate.
+- **Self-pruning decoy rotation** — a decoy SNI in `FAKE_SNI_POOL` whose wrong_seq confirm rate drops (it left a DPI whitelist, or got learned and blocked) is taken out of rotation automatically and re-probed after a backed-off cooldown. The pool self-heals to whatever still passes the DPI, so rotation is safe even under a strict single-domain whitelist (only the passing decoy stays in use; the pool never starves).
+- **Dropped the busybox dependency** — the boot service, WebUI bridge, and uninstaller now prefer Android's own `curl`/`setsid`/`tail`/`pkill` (`/system/bin`, always present) and fall back to busybox only if needed. Magisk does not ship busybox in every context, which could leave the WebUI showing OFFLINE or the daemon failing to detach.
+- **Fixed a stale upstream ping** — after a scan applied a new `CONNECT_IP`, the Status tab kept showing the old server's RTT badge. It now clears when the upstream changes, so the ping reflects the current endpoint.
+
 ## v0.1.7
 ### Decoy + fingerprint rotation
 - **Per-connection decoy rotation** — set `FAKE_SNI_POOL` (a list of clean decoy SNIs) and/or `UTLS_POOL` (a list of fingerprints) in the config to rotate the fake ClientHello's SNI and browser fingerprint on every connection, so a DPI can't learn and block a single decoy/fingerprint over time. Opt-in: empty pools keep the current single decoy. wrong_seq-safe — a rotated combo whose fake hello exceeds the one-segment limit falls back automatically. Verified on-device: decoy + fingerprint rotate per connection with no effect on confirmation.

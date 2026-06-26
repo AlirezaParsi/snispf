@@ -27,8 +27,12 @@ type Config struct {
 	// hand-built hello.
 	UTLS string `json:"UTLS,omitempty"`
 	// FakeSNIPool, when non-empty, rotates the decoy SNI of the fake hello per
-	// connection (round-robin) so a DPI can't learn/block a single decoy. Each
-	// entry should be a known-clean SNI. Empty = use the endpoint's FAKE_SNI.
+	// connection so a DPI can't learn/block a single decoy. Rotation is
+	// health-tracked: a decoy whose wrong_seq confirm rate drops (it left a
+	// whitelist or got learned) is taken out of rotation and re-probed after a
+	// backed-off cooldown, so the pool self-prunes to whatever still passes the
+	// DPI. Each entry should be a known-clean SNI. Empty = use the endpoint's
+	// FAKE_SNI.
 	FakeSNIPool []string `json:"FAKE_SNI_POOL,omitempty"`
 	// UTLSPool, when non-empty, rotates the fake-hello fingerprint per connection
 	// among these presets. Empty = use UTLS. For wrong_seq, entries whose fake

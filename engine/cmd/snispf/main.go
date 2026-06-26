@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -263,8 +264,17 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Shared byte counters for throughput stats, flushed to stats.json for the
+	// WebUI. One pointer reused across runtime rebuilds so totals don't reset on
+	// an internal recovery; each Server tallies into it.
+	counters := &forwarder.Counters{}
+	for i := range runtimes {
+		runtimes[i].server.Counters = counters
+	}
+
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go writeStatsLoop(rootCtx, cfgPath, counters)
 
 	fmt.Print(banner)
 	logx.Infof("SNISPF Go | strategy=%s | listeners=%d", cfg.FragmentStrategy, len(runtimes))
@@ -346,9 +356,40 @@ func main() {
 				log.Fatal(err)
 			}
 			for i := range runtimes {
-				rt := runtimes[i]
-				printRuntimeModeHint(rt.cfg, rt.injector != nil)
+				runtimes[i].server.Counters = counters
+				printRuntimeModeHint(runtimes[i].cfg, runtimes[i].injector != nil)
 			}
+		}
+	}
+}
+
+// writeStatsLoop flushes cumulative relayed-byte totals to stats.json next to
+// the config once a second, so the control service (a separate process) and the
+// WebUI can read live throughput. Written atomically (temp+rename) so a reader
+// never sees a partial file. A final flush runs on shutdown.
+func writeStatsLoop(ctx context.Context, cfgPath string, c *forwarder.Counters) {
+	dir := filepath.Dir(cfgPath)
+	if dir == "" || dir == "." {
+		return
+	}
+	path := filepath.Join(dir, "stats.json")
+	write := func() {
+		data := fmt.Sprintf(`{"bytes_up":%d,"bytes_down":%d,"ts":%d}`,
+			c.Up.Load(), c.Down.Load(), time.Now().UnixMilli())
+		tmp := path + ".tmp"
+		if os.WriteFile(tmp, []byte(data), 0o644) == nil {
+			_ = os.Rename(tmp, path)
+		}
+	}
+	tick := time.NewTicker(1 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			write()
+			return
+		case <-tick.C:
+			write()
 		}
 	}
 }

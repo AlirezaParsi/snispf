@@ -1,7 +1,7 @@
 id=snispf
 name=SNISPF DPI Bypass
-version=v0.1.7
-versionCode=17
+version=v0.1.8
+versionCode=18
 author=AlirezaParsi
 description=SNI-spoofing DPI bypass tunnel with WebUI, DNS-free edge scanner, auto-tune, uTLS fingerprints, and full-tunnel VPN escape. Runs as a root boot service; control API on 127.0.0.1:8797.
 updateJson=https://raw.githubusercontent.com/AlirezaParsi/snispf/main/update.json
