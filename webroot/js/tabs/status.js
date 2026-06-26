@@ -73,14 +73,21 @@
         upStat
       ]));
 
-      // Live throughput + cumulative data, in front of the connected devices.
+      // Live throughput + cumulative data — a slim one-row strip so the fixed
+      // (non-scrolling) Status view still fits without pushing the devices card off.
       var down = running && cl ? (cl.down_bps || 0) : 0;
       var up = running && cl ? (cl.up_bps || 0) : 0;
       var used = running && cl && typeof cl.bytes_up === "number" ? (cl.bytes_up + cl.bytes_down) : 0;
-      v.appendChild(el("div.stats", null, [
-        stat(t("stat_down"), "download", running ? fmtRate(down) : "—", running && down ? ".stat__v--green" : ""),
-        stat(t("stat_up"), "upload", running ? fmtRate(up) : "—"),
-        stat(t("stat_data"), "database", running ? fmtBytes(used) : "—")
+      function speedItem(iconName, label, value, valClass) {
+        return el("div.speed__item", { title: label }, [
+          ui.icon(iconName, "ico--sm"),
+          el("span.speed__val" + (valClass || ""), null, [value])
+        ]);
+      }
+      v.appendChild(el("div.speed", null, [
+        speedItem("download", t("stat_down"), running ? fmtRate(down) : "—", running && down ? ".stat__v--green" : ""),
+        speedItem("upload", t("stat_up"), running ? fmtRate(up) : "—"),
+        speedItem("database", t("stat_data"), running ? fmtBytes(used) : "—")
       ]));
 
       var body = [];

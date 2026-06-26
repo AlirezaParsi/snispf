@@ -188,6 +188,11 @@ body {
 
 /* ---- stat grid ---- */
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* slim one-row throughput strip (↓ rate · ↑ rate · data) */
+.speed { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.speed__item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 11px; display: flex; align-items: center; gap: 7px; min-width: 0; }
+.speed__item .ico { color: var(--muted); flex: none; }
+.speed__val { font-size: 13.5px; font-weight: 650; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 13px 14px; min-width: 0; }
 .stat__k { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .stat__v { font-size: 17px; font-weight: 650; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
