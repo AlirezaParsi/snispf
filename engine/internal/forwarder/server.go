@@ -101,6 +101,14 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// Handle serves one already-accepted connection. The daemon binds the listener
+// once and dispatches here, swapping the active Server on WAN/endpoint rebuilds
+// WITHOUT closing the listener — so local clients stay connectable even while the
+// upstream path is rebinding (flapping mobile WAN, full-tunnel VPN escape).
+func (s *Server) Handle(ctx context.Context, incoming *net.TCPConn) {
+	s.handleConn(ctx, incoming)
+}
+
 func (s *Server) handleConn(ctx context.Context, incoming *net.TCPConn) {
 	defer incoming.Close()
 	_ = incoming.SetReadDeadline(time.Now().Add(30 * time.Second))

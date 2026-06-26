@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -292,52 +293,81 @@ func main() {
 		go watchWAN(rootCtx, cfg.Interface, cfg.ConnectIP, onCriticalRestart)
 	}
 
+	// Persistent listeners: bind each configured port ONCE for the life of the
+	// core. WAN-driven and failure-driven rebuilds swap only the active server +
+	// injector behind an atomic pointer; the listener socket is NEVER torn down.
+	// The old code re-created the listener on every rebuild, so a flapping mobile
+	// WAN / full-tunnel VPN made 127.0.0.1 refuse connections for seconds at a
+	// time (and raced "bind: address already in use" → fatal). Now local clients
+	// stay connectable through all the churn.
+	type liveListener struct {
+		ln   *net.TCPListener
+		name string
+		srv  atomic.Pointer[forwarder.Server]
+	}
+	lives := make([]*liveListener, 0, len(runtimes))
+	for i := range runtimes {
+		rt := runtimes[i]
+		laddr, lerr := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%s:%d", rt.server.ListenHost, rt.server.ListenPort))
+		if lerr != nil {
+			log.Fatalf("resolve listen addr %s:%d: %v", rt.server.ListenHost, rt.server.ListenPort, lerr)
+		}
+		ln, lerr := net.ListenTCP("tcp4", laddr)
+		if lerr != nil {
+			log.Fatalf("listen %s: %v", laddr, lerr)
+		}
+		ll := &liveListener{ln: ln, name: rt.name}
+		ll.srv.Store(rt.server)
+		lives = append(lives, ll)
+		logx.Infof("listening on %s (persistent)", laddr)
+	}
+	defer func() {
+		for _, ll := range lives {
+			_ = ll.ln.Close()
+		}
+	}()
+
+	// One accept loop per persistent listener; each dispatches to the CURRENT
+	// server for that port (swapped on rebuild without dropping the socket).
+	for i := range lives {
+		ll := lives[i]
+		go func() {
+			for {
+				conn, aerr := ll.ln.AcceptTCP()
+				if aerr != nil {
+					select {
+					case <-rootCtx.Done():
+						return
+					default:
+						continue // transient accept error, keep serving
+					}
+				}
+				ll.srv.Load().Handle(rootCtx, conn)
+			}
+		}()
+	}
+
+	stopInjectors := func(rts []serverRuntime) {
+		for i := range rts {
+			if rts[i].injector != nil {
+				rts[i].injector.Stop()
+			}
+		}
+	}
+
 	lastRestartAt := time.Time{}
 	restartBurst := 0
 	lastSwapAt := time.Time{}
 
 	for {
-		runCtx, cancelRun := context.WithCancel(rootCtx)
-		errCh := make(chan error, len(runtimes))
-
-		for i := range runtimes {
-			rt := runtimes[i]
-			go func(name string, srv *forwarder.Server) {
-				if runErr := srv.Run(runCtx); runErr != nil && !errors.Is(runErr, context.Canceled) {
-					errCh <- fmt.Errorf("listener %s failed: %w", name, runErr)
-				}
-			}(rt.name, rt.server)
-		}
-
 		select {
 		case <-rootCtx.Done():
-			cancelRun()
-			for i := range runtimes {
-				if runtimes[i].injector != nil {
-					runtimes[i].injector.Stop()
-				}
-			}
+			stopInjectors(runtimes)
 			return
-		case runErr := <-errCh:
-			cancelRun()
-			for i := range runtimes {
-				if runtimes[i].injector != nil {
-					runtimes[i].injector.Stop()
-				}
-			}
-			log.Fatal(runErr)
 		case reason := <-restartReqCh:
-			cancelRun()
-			for i := range runtimes {
-				if runtimes[i].injector != nil {
-					runtimes[i].injector.Stop()
-				}
-			}
-
 			// Auto-swap: a persistently failing endpoint (not WAN churn) → try a
 			// faster/working CF edge from the hit-list before rebuilding. Only for a
-			// single-endpoint wrong_seq config (the injector is single-remote), and
-			// throttled to once per 30s so a bad network doesn't thrash the edge.
+			// single-endpoint wrong_seq config, throttled to once per 30s.
 			endpointFailed := reason == "all_endpoints_failed_confirmation" || reason == "upstream_unreachable"
 			if endpointFailed && cfg.AutoSwapEnabled() && cfg.BypassMethod == "wrong_seq" &&
 				len(config.EnabledEndpoints(cfg.Endpoints)) <= 1 && time.Since(lastSwapAt) > 30*time.Second {
@@ -346,13 +376,9 @@ func main() {
 				}
 			}
 
-			// A WAN change (mobile cell/IP rotation) is legitimate environmental
-			// churn, not a crash loop — rebuild without counting it toward the
-			// backoff, however often it flaps. Other reasons (e.g. repeated
-			// confirmation failure) get an escalating backoff so a genuinely broken
-			// state doesn't hammer rebuilds — but the core is NEVER killed: a dead
-			// core strands the tunnel with no recovery (the service does not restart
-			// it), so we back off and keep retrying instead of the old log.Fatal.
+			// A WAN change is environmental churn, not a crash loop — don't count it
+			// toward the backoff. Other reasons get an escalating backoff. Listeners
+			// stay up throughout, so a rebuild never drops local clients.
 			if reason != "wan_changed" {
 				now := time.Now()
 				if !lastRestartAt.IsZero() && now.Sub(lastRestartAt) < 20*time.Second {
@@ -369,34 +395,44 @@ func main() {
 					logx.Warnf("internal recovery backing off reason=%s burst=%d sleep=%s", reason, restartBurst, backoff)
 					select {
 					case <-rootCtx.Done():
+						stopInjectors(runtimes)
 						return
 					case <-time.After(backoff):
 					}
 				}
 			}
 
-			logx.Warnf("internal recovery requested reason=%s action=rebuild_runtimes burst=%d", reason, restartBurst)
+			logx.Warnf("internal recovery requested reason=%s action=rebuild_injectors burst=%d", reason, restartBurst)
 
+			old := runtimes
 			// Retry the rebuild instead of dying on a transient build error (e.g. a
-			// WAN-down race where the raw injector can't bind yet). Keeps the core
-			// alive until the interface comes back.
+			// WAN-down race where the raw injector can't bind yet). Listeners persist.
+			var newRuntimes []serverRuntime
 			for {
 				var berr error
-				runtimes, berr = buildServerRuntimes(cfg, *noRaw, onCriticalRestart)
+				newRuntimes, berr = buildServerRuntimes(cfg, *noRaw, onCriticalRestart)
 				if berr == nil {
 					break
 				}
 				logx.Warnf("runtime rebuild failed reason=%s err=%v; retry in 5s", reason, berr)
 				select {
 				case <-rootCtx.Done():
+					stopInjectors(old)
 					return
 				case <-time.After(5 * time.Second):
 				}
 			}
-			for i := range runtimes {
-				runtimes[i].server.Counters = counters
-				printRuntimeModeHint(runtimes[i].cfg, runtimes[i].injector != nil)
+			// Swap the active server behind each listener BEFORE stopping the old
+			// injectors, so new connections never hit a stopped injector.
+			for i := range newRuntimes {
+				newRuntimes[i].server.Counters = counters
+				if i < len(lives) {
+					lives[i].srv.Store(newRuntimes[i].server)
+				}
+				printRuntimeModeHint(newRuntimes[i].cfg, newRuntimes[i].injector != nil)
 			}
+			stopInjectors(old)
+			runtimes = newRuntimes
 		}
 	}
 }

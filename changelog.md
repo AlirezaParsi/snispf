@@ -4,6 +4,10 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.2.0
+### Rock-solid local listener (no more drops on WAN flaps)
+- **The local proxy port stays bound continuously.** Until now, every WAN change (mobile cell/IP rotation, full-tunnel VPN escape) rebuilt the whole runtime — including the listener — so on a flapping network `127.0.0.1:LISTEN_PORT` refused connections for seconds at a time ("not even tcping works"), and a fast flap could race `bind: address already in use` and kill the core. Now the listener is bound **once** for the core's life; WAN/endpoint rebuilds swap only the upstream injector behind it. Verified on a live flapping WAN: **40/40** local connects succeed across 6 injector rebuilds, with the core never dropping. Note: data still needs the physical WAN up — on a full-tunnel VPN, SNISPF deliberately dials the physical link (to apply the bypass on the real path), so if that link is down the bypass can't carry traffic even though the listener is healthy.
+
 ## v0.1.9
 ### Survives WAN flaps + auto-swaps to the fastest edge
 - **The tunnel no longer dies when the mobile WAN flaps.** On a network that rotates cells/IPs (rmnet rotation), each change rebuilds the runtime to rebind the injector — but a rapid flap storm used to trip an internal guard that killed the whole core (`exit status 1`, tunnel stuck off until you reopened it, since nothing restarts a dead core). Now WAN changes never count as a crash loop, other failures back off instead of aborting, and a transient rebuild error retries — the core stays alive and recovers on its own. Verified on-device through a live flap storm: continuous rebuilds, zero deaths.
