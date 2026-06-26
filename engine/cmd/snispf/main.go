@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -308,18 +309,15 @@ func main() {
 	lives := make([]*liveListener, 0, len(runtimes))
 	for i := range runtimes {
 		rt := runtimes[i]
-		laddr, lerr := net.ResolveTCPAddr("tcp4", fmt.Sprintf("%s:%d", rt.server.ListenHost, rt.server.ListenPort))
+		addr := fmt.Sprintf("%s:%d", rt.server.ListenHost, rt.server.ListenPort)
+		ln, lerr := listenWithRetry(rootCtx, addr)
 		if lerr != nil {
-			log.Fatalf("resolve listen addr %s:%d: %v", rt.server.ListenHost, rt.server.ListenPort, lerr)
-		}
-		ln, lerr := net.ListenTCP("tcp4", laddr)
-		if lerr != nil {
-			log.Fatalf("listen %s: %v", laddr, lerr)
+			log.Fatalf("listen %s: %v", addr, lerr)
 		}
 		ll := &liveListener{ln: ln, name: rt.name}
 		ll.srv.Store(rt.server)
 		lives = append(lives, ll)
-		logx.Infof("listening on %s (persistent)", laddr)
+		logx.Infof("listening on %s (persistent)", addr)
 	}
 	defer func() {
 		for _, ll := range lives {
@@ -342,7 +340,11 @@ func main() {
 						continue // transient accept error, keep serving
 					}
 				}
-				ll.srv.Load().Handle(rootCtx, conn)
+				// One goroutine per connection — must NOT block the accept loop, or
+				// connections pile up unaccepted (a slow/dead upstream makes each
+				// handler hold for the dial/read timeout) and the proxy looks hung.
+				srv := ll.srv.Load()
+				go srv.Handle(rootCtx, conn)
 			}
 		}()
 	}
@@ -478,6 +480,14 @@ func autoSwapEndpoint(ctx context.Context, cfg *config.Config, cfgPath string) b
 	if strings.EqualFold(ifName, "auto") {
 		ifName = netutil.PhysicalWANInterface(cfg.ConnectIP)
 	}
+	// Don't swap if the current endpoint is actually reachable now. On a flapping
+	// WAN the dial can fail because it was bound to a stale interface (mid-rebind),
+	// not because the edge is bad — re-probing on the freshly-resolved interface
+	// avoids churning away from a perfectly good endpoint on a false signal.
+	if endpointReachable(cfg.ConnectIP, cfg.ConnectPort, ifName) {
+		logx.Infof("auto-swap: current endpoint %s:%d reachable, keeping it (failures were likely WAN churn)", cfg.ConnectIP, cfg.ConnectPort)
+		return false
+	}
 	hitsPath := filepath.Join(filepath.Dir(cfgPath), "cf_hits.json")
 	rep, err := scan.Run(ctx, scan.Options{
 		HitsPath:  hitsPath,
@@ -504,6 +514,54 @@ func autoSwapEndpoint(ctx context.Context, cfg *config.Config, cfgPath string) b
 		logx.Warnf("auto-swap: persist failed (still using new endpoint in-memory): %v", err)
 	}
 	logx.Infof("auto-swap: endpoint %s -> %s (rtt=%.0fms)", old, best.IP, best.RTTMS)
+	return true
+}
+
+// listenWithRetry binds a TCP listener with SO_REUSEADDR and retries briefly on
+// "address already in use" — a fast core restart can race the previous listener
+// socket still lingering (TIME_WAIT, or the old core not fully exited). Without
+// this the core log.Fatal'd and died on restart instead of recovering.
+func listenWithRetry(ctx context.Context, addr string) (*net.TCPListener, error) {
+	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
+		var serr error
+		_ = c.Control(func(fd uintptr) {
+			serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		})
+		return serr
+	}}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		ln, err := lc.Listen(ctx, "tcp4", addr)
+		if err == nil {
+			return ln.(*net.TCPListener), nil
+		}
+		lastErr = err
+		if !strings.Contains(err.Error(), "address already in use") {
+			return nil, err
+		}
+		logx.Warnf("listen %s busy (old socket lingering), retry %d/10 in 1s", addr, attempt+1)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+	return nil, lastErr
+}
+
+// endpointReachable does a quick TCP dial to ip:port bound to the given WAN
+// device (so it tests the real physical path, escaping a VPN tun). Used to tell a
+// genuinely dead endpoint from a transient WAN-churn dial failure.
+func endpointReachable(ip string, port int, ifName string) bool {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	if ctrl := netutil.BindToDeviceControl(ifName); ctrl != nil {
+		d.Control = ctrl
+	}
+	conn, err := d.Dial("tcp4", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
 	return true
 }
 

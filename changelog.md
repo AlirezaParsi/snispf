@@ -4,6 +4,12 @@ SNI-spoofing DPI-bypass root module — Magisk / KernelSU / APatch.
 
 ---
 
+## v0.2.1
+### Critical: proxy no longer hangs under load (fixes v0.2.0)
+- **Connections are served concurrently again.** v0.2.0's new persistent listener accidentally handled connections one-at-a-time — under an app like v2rayNG that opens many connections at once (and with a slow upstream), they piled up unaccepted and the proxy looked dead ("real-delay fails / network down"). Each connection now gets its own goroutine, as before. This was the main cause of v0.2.0 feeling broken.
+- **The core survives a fast restart.** Binding the listener now retries (with SO_REUSEADDR) instead of dying with `bind: address already in use` when a previous instance's socket is still lingering — a restart no longer kills the tunnel.
+- **Auto-swap no longer churns your endpoint on a flapping WAN.** Before swapping, it re-checks whether the current edge is actually reachable; a dial that failed only because the WAN was mid-rebind (stale interface) no longer counts as a dead endpoint, so your configured IP stays put.
+
 ## v0.2.0
 ### Rock-solid local listener (no more drops on WAN flaps)
 - **The local proxy port stays bound continuously.** Until now, every WAN change (mobile cell/IP rotation, full-tunnel VPN escape) rebuilt the whole runtime — including the listener — so on a flapping network `127.0.0.1:LISTEN_PORT` refused connections for seconds at a time ("not even tcping works"), and a fast flap could race `bind: address already in use` and kill the core. Now the listener is bound **once** for the core's life; WAN/endpoint rebuilds swap only the upstream injector behind it. Verified on a live flapping WAN: **40/40** local connects succeed across 6 injector rebuilds, with the core never dropping. Note: data still needs the physical WAN up — on a full-tunnel VPN, SNISPF deliberately dials the physical link (to apply the bypass on the real path), so if that link is down the bypass can't carry traffic even though the listener is healthy.
